@@ -1,0 +1,27 @@
+### Start/end gcode for left extruder
+start_gcode=
+	M140 S%b          ; set bed temp
+	M104 S%t T1       ; set hotend temp
+	G90               ; absolute positioning
+	G28               ; home all axes
+	M132 X Y Z A B    ; recall stored home axes
+	G1 Z100 F3300
+	G1 X-109.5 Y-74 F6000
+	M7                ; wait for bed temp
+	M6 T1             ; wait for toolhead temp
+	M907 X100 Y100 Z40 A20 B90   ; set digital trimpot
+	G1 Z0.6 F3300
+	G4 P2000
+	M108 T1           ; tool change
+	G1 E5.0 F200      ; prime extruder
+	G92 E0.0
+	G1 E-%R F1800     ; do retract
+	G92 E0.0
+end_gcode=
+	M104 S0 T1        ; zero temps
+	M140 S0
+	G1 Z155 F3300     ; lower bed
+	G28 X0 Y0         ; home X and Y
+	M132 X Y Z A B
+	G91               ; set relative positioning
+	M18               ; disable steppers
