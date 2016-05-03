@@ -124,6 +124,7 @@ static struct {
 	bool align_seams           = true;     /* Align seams to the lower left corner */
 	bool clean_insets          = true;     /* Do ClipperLib::CleanPolygon operation on all insets (only the initial outline is cleaned if this is false) */
 	bool fill_inset_gaps       = true;     /* Fill gaps between shells */
+	bool no_solid              = false;    /* If true, only generate solid fill on the very top and bottom of the model */
 	bool anchor                = true;     /* Clip and anchor inset paths */
 	bool outside_first         = false;    /* Prefer exterior shells */
 	fl_t fill_threshold        = 0.2;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
@@ -405,6 +406,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "fill_inset_gaps") == 0) {
 		config.fill_inset_gaps = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "no_solid") == 0) {
+		config.no_solid = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "anchor") == 0) {
 		config.anchor = PARSE_BOOL(value);
@@ -989,7 +993,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
 		}
-		else if (config.floor_layers > 0 || config.roof_layers > 0) {
+		else if (!config.no_solid && (config.floor_layers > 0 || config.roof_layers > 0)) {
 			ClipperLib::Clipper sc;
 			ClipperLib::Paths s_tmp;
 			
@@ -1762,6 +1766,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  align seams           = %s\n", (config.align_seams) ? "true" : "false");
 	fprintf(stderr, "  clean insets          = %s\n", (config.clean_insets) ? "true" : "false");
 	fprintf(stderr, "  fill inset gaps       = %s\n", (config.fill_inset_gaps) ? "true" : "false");
+	fprintf(stderr, "  no solid              = %s\n", (config.no_solid) ? "true" : "false");
 	fprintf(stderr, "  anchor                = %s\n", (config.anchor) ? "true" : "false");
 	fprintf(stderr, "  outside first         = %s\n", (config.outside_first) ? "true" : "false");
 	fprintf(stderr, "  fill threshold        = %f\n", config.fill_threshold);

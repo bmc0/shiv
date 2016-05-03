@@ -88,6 +88,7 @@ Option                  | Default value | Description
 `align_seams`           |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
 `clean_insets`          |        `true` | Do `ClipperLib::CleanPolygon` operation on all insets (only the initial outline is cleaned if this is false).
 `fill_inset_gaps`       |        `true` | Fill gaps between shells.
+`no_solid`              |       `false` | If true, only generate solid fill on the very top and bottom of the model.
 `anchor`                |        `true` | Clip and anchor inset paths.
 `outside_first`         |       `false` | Prefer exterior shells.
 `fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
