@@ -808,13 +808,13 @@ static void do_offset(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t dist
 	co.AddPaths(src, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
 	if (remove_overlap) {
 		fl_t extra = (dist > 0) ? (config.extrusion_width / 2.0) : (config.extrusion_width / -2.0);
-		co.Execute(dest, (dist + extra) * SCALE_CONSTANT);
+		co.Execute(dest, lround((dist + extra) * SCALE_CONSTANT));
 		co.Clear();
 		co.AddPaths(dest, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
-		co.Execute(dest, -extra * SCALE_CONSTANT);
+		co.Execute(dest, lround(-extra * SCALE_CONSTANT));
 	}
 	else
-		co.Execute(dest, dist * SCALE_CONSTANT);
+		co.Execute(dest, lround(dist * SCALE_CONSTANT));
 }
 
 static void generate_insets(struct slice *slice)
@@ -855,13 +855,13 @@ static void generate_insets(struct slice *slice)
 				ClipperLib::ReversePaths(hole);
 				co.AddPaths(hole, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
 				if (config.fill_threshold > 0.0) {
-					co.Execute(island.inset_gaps[i], (config.extrusion_width + config.extrusion_width * config.fill_threshold) / -2.0 * SCALE_CONSTANT);
+					co.Execute(island.inset_gaps[i], lround((config.extrusion_width + config.extrusion_width * config.fill_threshold) / -2.0 * SCALE_CONSTANT));
 					co.Clear();
 					co.AddPaths(island.inset_gaps[i], CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
-					co.Execute(island.inset_gaps[i], config.extrusion_width * config.fill_threshold / 2.0 * SCALE_CONSTANT);
+					co.Execute(island.inset_gaps[i], lround(config.extrusion_width * config.fill_threshold / 2.0 * SCALE_CONSTANT));
 				}
 				else {
-					co.Execute(island.inset_gaps[i], -config.extrusion_width / 2.0 * SCALE_CONSTANT);
+					co.Execute(island.inset_gaps[i], lround(-config.extrusion_width / 2.0 * SCALE_CONSTANT));
 				}
 				co.Clear();
 			}
@@ -1191,8 +1191,8 @@ static bool intersects(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, Clipper
 
 static bool crosses_boundary(struct machine *m, struct island *island, fl_t x, fl_t y)
 {
-	ClipperLib::IntPoint c((ClipperLib::cInt) (m->x * SCALE_CONSTANT), (ClipperLib::cInt) (m->y * SCALE_CONSTANT));
-	ClipperLib::IntPoint d((ClipperLib::cInt) (x * SCALE_CONSTANT), (ClipperLib::cInt) (y * SCALE_CONSTANT));
+	ClipperLib::IntPoint c((ClipperLib::cInt) lround(m->x * SCALE_CONSTANT), (ClipperLib::cInt) lround(m->y * SCALE_CONSTANT));
+	ClipperLib::IntPoint d((ClipperLib::cInt) lround(x * SCALE_CONSTANT), (ClipperLib::cInt) lround(y * SCALE_CONSTANT));
 	for (ClipperLib::Path &p : island->outlines) {
 		ClipperLib::IntPoint a = p[0];
 		for (size_t i = 1; i < p.size(); ++i) {
