@@ -2,3 +2,5 @@ shiv
 .*.swp
 *.o
 *.so
+*.obj
+*.exe

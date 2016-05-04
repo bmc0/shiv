@@ -22,14 +22,13 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
-extern "C" {
-	#include <getopt.h>
-}
+#include <getopt.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
-#include "list.h"
 #include "clipper.hpp"
+#include "misc_defs.h"
+#include "list.h"
 
 #define SCALE_CONSTANT             1000  /* Clipper uses integers, so we need to scale floating point values. Precision is 1 / SCALE_CONSTANT units. */
 #define CLEAN_DIST                 (1.41421356 * config.coarseness)
@@ -180,7 +179,7 @@ struct g_move {
 
 struct slice {
 #ifdef _OPENMP
-	volatile int lock;
+	omp_lock_t lock;
 	volatile ssize_t n_seg, s_len;
 #else
 	ssize_t n_seg, s_len;
@@ -196,19 +195,6 @@ struct machine {
 	fl_t feed_rate;
 	bool is_retracted, new_island;
 };
-
-#ifdef _OPENMP
-static void spin_lock(volatile int *x)
-{
-	while (__sync_lock_test_and_set(x, 1))
-		while (*x);
-}
-
-static void spin_unlock(volatile int *x)
-{
-	__sync_lock_release(x);
-}
-#endif
 
 static void die(const char *s, int r)
 {
@@ -587,7 +573,7 @@ static void find_segments(struct slice *slices, struct triangle *t)
 	for (i = start; i < end; ++i) {
 		z = ((fl_t) i) * config.layer_height + config.layer_height / 2;
 	#ifdef _OPENMP
-		spin_lock(&slices[i].lock);
+		omp_set_lock(&slices[i].lock);
 	#endif
 		if (slices[i].n_seg >= slices[i].s_len) {
 			if (slices[i].s_len == 0) {
@@ -626,7 +612,7 @@ static void find_segments(struct slice *slices, struct triangle *t)
 			++slices[i].n_seg;
 		invalid_segment:
 	#ifdef _OPENMP
-		spin_unlock(&slices[i].lock);
+		omp_unset_lock(&slices[i].lock);
 	#else
 		;
 	#endif
@@ -1079,10 +1065,16 @@ static void slice_object(struct object *o)
 	start = std::chrono::high_resolution_clock::now();
 	fputs("  find segments...", stderr);
 #ifdef _OPENMP
+	for (i = 0; i < o->n_slices; ++i)
+		omp_init_lock(&o->slices[i].lock);
 	#pragma omp parallel for
 #endif
 	for (i = 0; i < o->n; ++i)
 		find_segments(o->slices, &o->t[i]);
+#ifdef _OPENMP
+	for (i = 0; i < o->n_slices; ++i)
+		omp_destroy_lock(&o->slices[i].lock);
+#endif
 	fputs(" done\n", stderr);
 	free(o->t);
 	fputs("  generate outlines...", stderr);

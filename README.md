@@ -6,15 +6,23 @@ Shiv is a multithreaded G-code generator for 3D printers.
 
 #### Dependencies:
 
-* C++11 compiler (g++ is the default)
+* C++11 compiler
 
 #### Build:
+
+For Unix-like systems:
 
 	$ ./build.sh
 
 Note: If you're compiling under Cygwin, remove `-fopenmp` from CXXFLAGS in
-build.sh. Libgomp doesn't work very well under Windows so shiv often ends up
-running slower with OpenMP enabled.
+build.sh. Libgomp doesn't seem to work very well under Windows so shiv often
+ends up running slower with OpenMP enabled.
+
+For Windows:
+
+	> build.bat
+
+OpenMP is enabled by default for both platforms.
 
 ### Usage:
 
