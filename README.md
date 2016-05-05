@@ -14,11 +14,11 @@ For Unix-like systems:
 
 	$ ./build.sh
 
-Note: If you're compiling under Cygwin, remove `-fopenmp` from CXXFLAGS in
-build.sh. Libgomp doesn't seem to work very well under Windows so shiv often
+Note: If you're compiling under Cygwin, remove `-fopenmp` from `$CXXFLAGS` in
+`build.sh`. Libgomp doesn't seem to work very well under Windows so shiv often
 ends up running slower with OpenMP enabled.
 
-For Windows:
+For Windows (make sure `cl` is in your `%PATH%`):
 
 	> build.bat
 
@@ -61,7 +61,7 @@ Option                  | Default value | Description
 ------------------------|--------------:|------------
 `layer_height`          |         `0.2` | Layer height.
 `tolerance`             |       `0.001` | Segment connection tolerance. Large values can be used to close holes in broken models.
-`coarseness`            |         `5.0` | Approximate output coarseness in 1/SCALE_CONSTANT units (microns with the default SCALE_CONSTANT and millimeter input/output units).
+`coarseness`            |         `5.0` | Approximate output coarseness in `1/SCALE_CONSTANT` units (microns with the default `SCALE_CONSTANT` and millimeter input/output units).
 `extrusion_width`       |         `0.4` | Constrained (solid infill) extrusion width. Should *generally* be set to a value similar to your nozzle diameter.
 `xy_scale_factor`       |       `1.003` | The object is scaled by this ratio in the x and y axes to compensate for shrinkage. Around 1.003 works for PLA. ABS should be somewhere between 1.004 and 1.009.
 `z_scale_factor`        |         `1.0` | The object is scaled by this ratio in the z axis to compensate for shrinkage. Should probably be left at 1 unless a high temperature heated chamber is used.
@@ -81,7 +81,7 @@ Option                  | Default value | Description
 `first_layer_mult`      |         `0.5` | First layer feed rates (except travel) are multiplied by this value.
 `retract_len`           |         `1.0` | Retraction length.
 `retract_speed`         |        `20.0` | Retraction speed.
-`restart_speed`         |        `-1.0` | Restart speed. -1 means same as retract_speed.
+`restart_speed`         |        `-1.0` | Restart speed. -1 means same as `retract_speed`.
 `retract_min_travel`    |         `1.6` | Minimum travel for retraction when not crossing a boundary. Has no effect if `retract_within_island` is false.
 `retract_threshold`     |         `8.0` | Unconditional retraction threshold.
 `retract_within_island` |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
@@ -94,7 +94,7 @@ Option                  | Default value | Description
 `bed_temp`              |        `65.0` | Bed temperature.
 `infill_first`          |       `false` | Do infill before shells.
 `align_seams`           |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
-`clean_insets`          |        `true` | Do `ClipperLib::CleanPolygon` operation on all insets (only the initial outline is cleaned if this is false).
+`clean_insets`          |        `true` | Do `ClipperLib::CleanPolygon()` on all insets (only the initial outline is cleaned if this is false).
 `fill_inset_gaps`       |        `true` | Fill gaps between shells.
 `no_solid`              |       `false` | If true, only generate solid fill on the very top and bottom of the model.
 `anchor`                |        `true` | Clip and anchor inset paths.
@@ -103,8 +103,8 @@ Option                  | Default value | Description
 `min_layer_time`        |         `8.0` | Minimum layer time.
 `layer_time_samples`    |           `5` | Number of samples in the layer time moving average.
 `min_feed_rate`         |        `10.0` | Minimum feed rate.
-`material_density`      |     `0.00125` | Material density in arbitrary_mass_unit / input_output_unit^3. The default is correct for PLA and millimeter input/output units.
-`material_cost`         |     `0.01499` | Material cost in arbitrary_currency / arbitrary_mass_unit. The arbitrary mass unit must be the same as used in material_density.
+`material_density`      |     `0.00125` | Material density in `arbitrary_mass_unit / input_output_unit^3`. The default is approximately correct for PLA and millimeter input/output units.
+`material_cost`         |     `0.01499` | Material cost in `arbitrary_currency / arbitrary_mass_unit`. The arbitrary mass unit must be the same as used in `material_density`.
 
 #### Variables:
 
@@ -169,7 +169,7 @@ Example:
 
 #### Examples:
 
-Slice infile.stl and output gcode to outfile.gcode:
+Slice `infile.stl` and output gcode to `outfile.gcode`:
 
 	shiv -o outfile.gcode infile.stl
 
@@ -177,13 +177,14 @@ Same as above, but with some options set:
 
 	shiv -o outfile.gcode -d 0.5 -n 3 -x 30 -y 30 -O min_layer_time=15 -O temp=200 infile.stl
 
-Preview slices of infile.stl in gnuplot:
+Preview slices of `infile.stl` in gnuplot:
 
 	shiv -p infile.stl | gnuplot
 
 ### Feature wishlist:
 
 * ASCII STL, AMF, OBJ, etc. support (only reads binary STL currently)
+* Brim generation
 * Support structure generation
 * Bridge detection
 * Multi-extrusion support
