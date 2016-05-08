@@ -1434,8 +1434,8 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 		auto best = slice->islands.begin();
 		fl_t best_dist = HUGE_VAL;
 		for (auto it = slice->islands.begin(); it != slice->islands.end(); ++it) {
-			if (config.align_seams) {
-				for (ClipperLib::Path &p : it->outlines) {
+			if (config.align_seams && config.shells > 0) {
+				for (ClipperLib::Path &p : it->insets[0]) {
 					fl_t x = ((fl_t) p[0].X) / SCALE_CONSTANT;
 					fl_t y = ((fl_t) p[0].Y) / SCALE_CONSTANT;
 					fl_t dist = (x - m.x) * (x - m.x) + (y - m.y) * (y - m.y);
@@ -1446,7 +1446,7 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 				}
 			}
 			else {
-				for (ClipperLib::Path &p : it->outlines) {
+				for (ClipperLib::Path &p : (config.shells > 0) ? it->insets[0] : it->outlines) {
 					for (size_t i = 0; i < p.size(); ++i) {
 						fl_t x = ((fl_t) p[i].X) / SCALE_CONSTANT;
 						fl_t y = ((fl_t) p[i].Y) / SCALE_CONSTANT;
