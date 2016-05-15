@@ -31,8 +31,9 @@ OpenMP is enabled by default for both platforms.
 	shiv [-hp] [-o output_path] [-c config_path] [-O option=value]
 	     [-l layer_height] [-w extrusion_width] [-t tolerance]
 	     [-s scale_factor] [-d infill_density] [-n shells]
-	     [-r roof_thickness] [-f floor_thickness] [-C coarseness]
-	     [-x x_translate] [-y y_translate] binary_stl_file
+	     [-r roof_thickness] [-f floor_thickness] [-b brim_width]
+	     [-C coarseness] [-x x_translate] [-y y_translate]
+	     binary_stl_file
 
 #### Flags:
 
@@ -44,13 +45,14 @@ Flag                 | Description
 `-c config_path`     | Configuration file path
 `-O option=value`    | Set option to value
 `-l layer_height`    | Layer height
-`-w extrusion_width` | Constrained (infill) extrusion width
+`-w extrusion_width` | Constrained extrusion width
 `-t tolerance`       | Segment connection tolerance
 `-s scale_factor`    | Object scale factor
 `-d infill_density`  | Sparse infill density
 `-n shells`          | Number of shells
 `-r roof_thickness`  | Solid roof thickness
 `-f floor_thickness` | Solid floor thickness
+`-b brim_width`      | Brim width
 `-C coarseness`      | Output coarseness
 `-x x_translate`     | Translate object in the x-axis
 `-y y_translate`     | Translate object in the y-axis
@@ -62,7 +64,7 @@ Option                  | Default value | Description
 `layer_height`          |         `0.2` | Layer height.
 `tolerance`             |       `0.001` | Segment connection tolerance. Large values can be used to close holes in broken models.
 `coarseness`            |         `5.0` | Approximate output coarseness in `1/SCALE_CONSTANT` units (microns with the default `SCALE_CONSTANT` and millimeter input/output units).
-`extrusion_width`       |         `0.4` | Constrained (solid infill) extrusion width. Should *generally* be set to a value similar to your nozzle diameter.
+`extrusion_width`       |         `0.4` | Constrained extrusion width. Should *generally* be set to a value similar to your nozzle diameter.
 `xy_scale_factor`       |       `1.003` | The object is scaled by this ratio in the x and y axes to compensate for shrinkage. Around 1.003 works for PLA. ABS should be somewhere between 1.004 and 1.009.
 `z_scale_factor`        |         `1.0` | The object is scaled by this ratio in the z axis to compensate for shrinkage. Should probably be left at 1 unless a high temperature heated chamber is used.
 `x_center`              |         `0.0` | X coordinate to center the object on.
@@ -73,7 +75,7 @@ Option                  | Default value | Description
 `roof_thickness`        |         `0.8` | Solid surface thickness when looking upwards.
 `floor_thickness`       |         `0.8` | Solid surface thickness when looking downwards.
 `material_diameter`     |        `1.75` | Diameter of material.
-`flow_multiplier`       |         `1.0` | Flow rate adjustment to compensate for slightly incorrect E-steps or E-step variation between material types.
+`flow_multiplier`       |         `1.0` | Flow rate adjustment to compensate for incorrect E-steps or E-step variation between material types.
 `perimeter_feed_rate`   |        `25.0` | Outer shell feed rate.
 `loop_feed_rate`        |        `40.0` | Inner shell(s) feed rate.
 `infill_feed_rate`      |        `50.0` | Infill feed rate.
@@ -103,6 +105,7 @@ Option                  | Default value | Description
 `min_layer_time`        |         `8.0` | Minimum layer time.
 `layer_time_samples`    |           `5` | Number of samples in the layer time moving average.
 `min_feed_rate`         |        `10.0` | Minimum feed rate.
+`brim_width`            |         `0.0` | Brim width.
 `material_density`      |     `0.00125` | Material density in `arbitrary_mass_unit / input_output_unit^3`. The default is approximately correct for PLA and millimeter input/output units.
 `material_cost`         |     `0.01499` | Material cost in `arbitrary_currency / arbitrary_mass_unit`. The arbitrary mass unit must be the same as used in `material_density`.
 
@@ -184,7 +187,6 @@ Preview slices of `infile.stl` in gnuplot:
 ### Feature wishlist:
 
 * ASCII STL, AMF, OBJ, etc. support (only reads binary STL currently)
-* Brim generation
 * Support structure generation
 * Bridge detection
 * Multi-extrusion support

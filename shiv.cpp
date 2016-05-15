@@ -37,6 +37,7 @@
 #define CLIPPER_ARC_TOLERANCE      10.0
 #define CLIPPER_JOIN_TYPE          ClipperLib::jtSquare
 #define USE_BOUNDING_BOX           1
+#define BRIM_TYPE_2                false  /* Type 2 removes the brim lines in narrow places (such as holes), but has problems with concave exterior geometry */
 #define SHIV_DEBUG                 1
 typedef double fl_t;
 
@@ -56,8 +57,9 @@ static const char usage_string[] =
 	"usage: shiv [-hp] [-o output_path] [-c config_path] [-O option=value]\n"
 	"            [-l layer_height] [-w extrusion_width] [-t tolerance]\n"
 	"            [-s scale_factor] [-d infill_density] [-n shells]\n"
-	"            [-r roof_thickness] [-f floor_thickness] [-C coarseness]\n"
-	"            [-x x_translate] [-y y_translate] binary_stl_file\n"
+	"            [-r roof_thickness] [-f floor_thickness] [-b brim_width]\n"
+	"            [-C coarseness] [-x x_translate] [-y y_translate]\n"
+	"            binary_stl_file\n"
 	"\n"
 	"flags:\n"
 	"  -h                    show this help\n"
@@ -66,13 +68,14 @@ static const char usage_string[] =
 	"  -c config_path        configuration file path\n"
 	"  -O option=value       set option to value\n"
 	"  -l layer_height       layer height\n"
-	"  -w extrusion_width    constrained (infill) extrusion width\n"
+	"  -w extrusion_width    constrained extrusion width\n"
 	"  -t tolerance          segment connection tolerance\n"
 	"  -s scale_factor       object scale factor\n"
 	"  -d infill_density     sparse infill density\n"
 	"  -n shells             number of shells\n"
 	"  -r roof_thickness     solid roof thickness\n"
 	"  -f floor_thickness    solid floor thickness\n"
+	"  -b brim_width         brim width\n"
 	"  -C coarseness         output coarseness\n"
 	"  -x x_translate        translate object in the x-axis\n"
 	"  -y y_translate        translate object in the y-axis\n";
@@ -130,6 +133,8 @@ static struct {
 	fl_t min_layer_time        = 8.0;      /* Slow down if the estimated layer time is less than this value */
 	int layer_time_samples     = 5;        /* Number of samples in the layer time moving average */
 	fl_t min_feed_rate         = 10.0;
+	fl_t brim_width            = 0.0;
+	int brim_lines;
 	fl_t material_density      = 0.00125;  /* Material density in <arbitrary mass unit> / <input/output unit>^3. The default is correct for PLA and millimeter input/output units */
 	fl_t material_cost         = 0.01499;  /* Material cost in <arbitrary currency> / <arbitrary mass unit>. The arbitrary mass unit must be the same as used in material_density */
 } config;
@@ -151,6 +156,7 @@ struct object {
 
 	ClipperLib::Paths solid_infill_patterns[2];
 	ClipperLib::Paths sparse_infill_pattern;
+	ClipperLib::Paths brim;
 };
 
 struct segment {
@@ -417,6 +423,10 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "min_feed_rate") == 0) {
 		config.min_feed_rate = atof(value);
 		CHECK_VALUE(config.min_feed_rate > 0.0, "minimum feed rate", "> 0");
+	}
+	else if (strcmp(key, "brim_width") == 0) {
+		config.brim_width = atof(value);
+		CHECK_VALUE(config.brim_width >= 0.0, "brim width", ">= 0");
 	}
 	else if (strcmp(key, "material_density") == 0) {
 		config.material_density = atof(value);
@@ -855,7 +865,7 @@ static void generate_insets(struct slice *slice)
 		if (config.align_seams) {
 			for (int i = 0; i < config.shells; ++i) {
 				for (ClipperLib::Path &p : island.insets[i]) {
-					if (p.size() > 1) {
+					if (p.size() >= 3) {
 						fl_t lowest = HUGE_VAL;
 						auto best = p.begin();
 						for (auto it = best; it != p.end(); ++it) {
@@ -871,6 +881,36 @@ static void generate_insets(struct slice *slice)
 			}
 		}
 	}
+}
+
+static void generate_brim(struct object *o)
+{
+#if BRIM_TYPE_2
+	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
+	ClipperLib::Paths brim_first;
+	for (struct island &island : o->slices[0].islands)
+		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	co.Execute(brim_first, lround(config.extrusion_width * config.brim_lines * SCALE_CONSTANT));
+	co.Clear();
+	o->brim.insert(o->brim.end(), brim_first.begin(), brim_first.end());
+	for (int i = 1; i < config.brim_lines; ++i) {
+		ClipperLib::Paths tmp;
+		co.AddPaths(brim_first, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+		co.Execute(tmp, lround(-config.extrusion_width * i * SCALE_CONSTANT));
+		co.Clear();
+		o->brim.insert(o->brim.end(), tmp.begin(), tmp.end());
+	}
+#else
+	for (int i = 1; i <= config.brim_lines; ++i) {
+		ClipperLib::Paths tmp;
+		for (struct island &island : o->slices[0].islands) {
+			ClipperLib::Paths &p = (config.shells > 0) ? island.insets[0] : island.infill_insets;
+			tmp.insert(tmp.end(), p.begin(), p.end());
+		}
+		do_offset(tmp, tmp, config.extrusion_width * i, true);
+		o->brim.insert(o->brim.end(), tmp.begin(), tmp.end());
+	}
+#endif
 }
 
 static void generate_infill_patterns(struct object *o)
@@ -1091,6 +1131,11 @@ static void slice_object(struct object *o)
 	for (i = 0; i < o->n_slices; ++i)
 		generate_insets(&o->slices[i]);
 	fputs(" done\n", stderr);
+	if (config.brim_lines > 0) {
+		fputs("  generate brim...", stderr);
+		generate_brim(o);
+		fputs(" done\n", stderr);
+	}
 	fputs("  generate infill...", stderr);
 	generate_infill_patterns(o);
 #ifdef _OPENMP
@@ -1108,8 +1153,8 @@ static void preview_slices(struct object *o)
 {
 	ssize_t i;
 	fprintf(stdout, "set size ratio -1\n");
-	fprintf(stdout, "set xrange [%e:%e]\n", o->c.x - o->w / 2.0, o->c.x + o->w / 2.0);
-	fprintf(stdout, "set yrange [%e:%e]\n", o->c.y - o->d / 2.0, o->c.y + o->d / 2.0);
+	fprintf(stdout, "set xrange [%e:%e]\n", o->c.x - o->w / 2.0 - (config.brim_lines * config.extrusion_width), o->c.x + o->w / 2.0 + (config.brim_lines * config.extrusion_width));
+	fprintf(stdout, "set yrange [%e:%e]\n", o->c.y - o->d / 2.0 - (config.brim_lines * config.extrusion_width), o->c.y + o->d / 2.0 + (config.brim_lines * config.extrusion_width));
 	for (i = 0; i < o->n_slices; ++i) {
 		fprintf(stderr, "layer %zd/%zd: intersections = %zd; islands = %zd\n", i + 1, o->n_slices, o->slices[i].n_seg, o->slices[i].islands.size());
 		fprintf(stdout, "set title 'Layer %zd/%zd'\n", i + 1, o->n_slices);
@@ -1117,7 +1162,7 @@ static void preview_slices(struct object *o)
 		fprintf(stdout, "plot \"-\" lc \"red\" dt 3 with lines title \"outline\", \"-\" lc \"blue\" with lines title \"insets\", \"-\" lc \"green\" with lines title \"infill\"\n");
 		for (struct island &island : o->slices[i].islands) {
 			for (ClipperLib::Path &path : island.outlines) {
-				if (path.size() > 0) {
+				if (path.size() >= 3) {
 					for (ClipperLib::IntPoint &p : path)
 						fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / SCALE_CONSTANT, ((double) p.Y) / SCALE_CONSTANT);
 					fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / SCALE_CONSTANT, ((double) path[0].Y) / SCALE_CONSTANT);
@@ -1137,7 +1182,7 @@ static void preview_slices(struct object *o)
 		for (struct island &island : o->slices[i].islands) {
 			for (int k = 0; k < config.shells; ++k) {
 				for (ClipperLib::Path &path : island.insets[k]) {
-					if (path.size() > 0) {
+					if (path.size() >= 3) {
 						for (ClipperLib::IntPoint &p : path)
 							fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / SCALE_CONSTANT, ((double) p.Y) / SCALE_CONSTANT);
 						fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / SCALE_CONSTANT, ((double) path[0].Y) / SCALE_CONSTANT);
@@ -1146,22 +1191,29 @@ static void preview_slices(struct object *o)
 				}
 			}
 		}
+		/* Draw brim */
+		if (i == 0) {
+			for (ClipperLib::Path &path : o->brim) {
+				if (path.size() >= 3) {
+					for (ClipperLib::IntPoint &p : path)
+						fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / SCALE_CONSTANT, ((double) p.Y) / SCALE_CONSTANT);
+					fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / SCALE_CONSTANT, ((double) path[0].Y) / SCALE_CONSTANT);
+					putc('\n', stdout);
+				}
+			}
+		}
 		fprintf(stdout, "e\n");
 		/* Draw infill */
 		for (struct island &island : o->slices[i].islands) {
 			for (ClipperLib::Path &path : island.solid_infill) {
-				if (path.size() > 0) {
-					for (ClipperLib::IntPoint &p : path)
-						fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / SCALE_CONSTANT, ((double) p.Y) / SCALE_CONSTANT);
-					putc('\n', stdout);
-				}
+				for (ClipperLib::IntPoint &p : path)
+					fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / SCALE_CONSTANT, ((double) p.Y) / SCALE_CONSTANT);
+				putc('\n', stdout);
 			}
 			for (ClipperLib::Path &path : island.sparse_infill) {
-				if (path.size() > 0) {
-					for (ClipperLib::IntPoint &p : path)
-						fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / SCALE_CONSTANT, ((double) p.Y) / SCALE_CONSTANT);
-					putc('\n', stdout);
-				}
+				for (ClipperLib::IntPoint &p : path)
+					fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / SCALE_CONSTANT, ((double) p.Y) / SCALE_CONSTANT);
+				putc('\n', stdout);
 			}
 		}
 		fprintf(stdout, "e\n");
@@ -1210,7 +1262,7 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 	fl_t e_len = 0.0;
 	fl_t len = sqrt((m->x - x) * (m->x - x) + (m->y - y) * (m->y - y) + (m->z - z) * (m->z - z));
 	if (is_travel) {
-		if (!m->is_retracted && config.retract_len > 0.0 && (m->new_island || len > config.retract_threshold || (config.retract_within_island && len > config.retract_min_travel) || crosses_boundary(m, island, x, y))) {
+		if (!m->is_retracted && config.retract_len > 0.0 && (m->new_island || len > config.retract_threshold || (config.retract_within_island && len > config.retract_min_travel) || (island && crosses_boundary(m, island, x, y)))) {
 			struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false };
 			append_g_move(slice, retract_move, config.retract_len);
 			m->e -= config.retract_len;
@@ -1295,7 +1347,62 @@ static size_t clip_path(ClipperLib::Path &p, size_t start_idx, fl_t clip)
 	return start_idx;
 }
 
-static void write_insets(struct slice *slice, struct island *island, struct machine *m, fl_t z, bool outside_first)
+static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, fl_t z, fl_t feed_rate)
+{
+	if (p.size() < 3)
+		return;
+	bool first_point = true;
+	bool do_anchor = false, did_anchor = false;
+	if (config.anchor && path_len_is_greater_than(p, config.extrusion_width * 3.0)) {
+		start_idx = clip_path(p, start_idx, config.extrusion_width / 2.0);
+		do_anchor = true;
+	}
+	size_t k = start_idx;
+	do {
+		if (first_point) {
+			linear_move(slice, island, m, INTPOINT_TO_FL_T(p[k]), z, 0.0, config.travel_feed_rate, true);
+		}
+		else {
+			fl_t anchor_e_len = 0.0;
+			if (do_anchor && !did_anchor) {
+				anchor_e_len = config.extrusion_width / 2.0 * config.extrusion_area * config.flow_multiplier / config.material_area;
+				did_anchor = true;
+			}
+			linear_move(slice, island, m, INTPOINT_TO_FL_T(p[k]), z, anchor_e_len, feed_rate, false);
+		}
+		first_point = false;
+		k = (k + 1 == p.size()) ? 0 : k + 1;
+	} while (k != start_idx);
+	if (!do_anchor)  /* If the path was not clipped, the start and end points are the same, so we need to do one more extrusion move back to the starting point. */
+		linear_move(slice, island, m, INTPOINT_TO_FL_T(p[start_idx]), z, 0.0, feed_rate, false);
+}
+
+static void plan_brim(struct object *o, struct machine *m, fl_t z)
+{
+	while (!o->brim.empty()) {
+		auto best = o->brim.end();
+		fl_t best_dist = HUGE_VAL;
+		size_t start_idx = 0;
+		for (auto it = o->brim.begin(); it != o->brim.end(); ++it) {
+			for (size_t k = 0; k < (*it).size(); ++k) {
+				fl_t x = ((fl_t) (*it)[k].X) / SCALE_CONSTANT;
+				fl_t y = ((fl_t) (*it)[k].Y) / SCALE_CONSTANT;
+				fl_t dist = (x - m->x) * (x - m->x) + (y - m->y) * (y - m->y);
+				if (dist < best_dist) {
+					best_dist = dist;
+					best = it;
+					start_idx = k;
+				}
+			}
+		}
+		if (best != o->brim.end()) {
+			generate_closed_path_moves(*best, start_idx, &o->slices[0], NULL, m, z, config.perimeter_feed_rate);
+			o->brim.erase(best);
+		}
+	}
+}
+
+static void plan_insets(struct slice *slice, struct island *island, struct machine *m, fl_t z, bool outside_first)
 {
 	if (config.shells > 0) {
 		int inset_num;
@@ -1353,41 +1460,14 @@ static void write_insets(struct slice *slice, struct island *island, struct mach
 				}
 			}
 			if (inset_num != -1) {
-				ClipperLib::Path &p = *best;
-				if (p.size() > 1) {
-					bool first_point = true;
-					fl_t feed_rate = (inset_num == 0) ? config.perimeter_feed_rate : config.loop_feed_rate;
-					bool do_anchor = false, did_anchor = false;
-					if (config.anchor && path_len_is_greater_than(p, config.extrusion_width * 3.0)) {
-						start_idx = clip_path(p, start_idx, config.extrusion_width / 2.0);
-						do_anchor = true;
-					}
-					size_t k = start_idx;
-					do {
-						if (first_point) {
-							linear_move(slice, island, m, INTPOINT_TO_FL_T(p[k]), z, 0.0, config.travel_feed_rate, true);
-						}
-						else {
-							fl_t anchor_e_len = 0.0;
-							if (do_anchor && !did_anchor) {
-								anchor_e_len = config.extrusion_width / 2.0 * config.extrusion_area * config.flow_multiplier / config.material_area;
-								did_anchor = true;
-							}
-							linear_move(slice, island, m, INTPOINT_TO_FL_T(p[k]), z, anchor_e_len, feed_rate, false);
-						}
-						first_point = false;
-						k = (k + 1 == p.size()) ? 0 : k + 1;
-					} while (k != start_idx);
-					if (!do_anchor)  /* If the path was not clipped, the start and end points are the same, so we need to do one more extrusion move back to the starting point. */
-						linear_move(slice, island, m, INTPOINT_TO_FL_T(p[start_idx]), z, 0.0, feed_rate, false);
-				}
+				generate_closed_path_moves(*best, start_idx, slice, island, m, z, (inset_num == 0) ? config.perimeter_feed_rate : config.loop_feed_rate);
 				island->insets[inset_num].erase(best);
 			}
 		} while (inset_num != -1);
 	}
 }
 
-static void write_infill(ClipperLib::Paths &paths, struct slice *slice, struct island *island, struct machine *m, fl_t z)
+static void plan_infill(ClipperLib::Paths &paths, struct slice *slice, struct island *island, struct machine *m, fl_t z)
 {
 	while (!paths.empty()) {
 		auto best = paths.end();
@@ -1417,9 +1497,8 @@ static void write_infill(ClipperLib::Paths &paths, struct slice *slice, struct i
 				linear_move(slice, island, m, INTPOINT_TO_FL_T(p[0]), z, 0.0, config.travel_feed_rate, true);
 				linear_move(slice, island, m, INTPOINT_TO_FL_T(p[1]), z, 0.0, config.infill_feed_rate, false);
 			}
-		}
-		if (best != paths.end())
 			paths.erase(best);
+		}
 	}
 }
 
@@ -1430,6 +1509,11 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 	m.y = o->c.y - o->d / 2.0;
 	m.z = ((fl_t) layer_num) * config.layer_height + config.layer_height;
 	m.is_retracted = true;  /* NOTE: This will cause unconditional retraction on layer change */
+	if (layer_num == 0 && config.brim_lines > 0) {
+		m.x -= config.brim_lines * config.extrusion_width;
+		m.y -= config.brim_lines * config.extrusion_width;
+		plan_brim(o, &m, m.z);
+	}
 	while (slice->islands.size() > 0) {
 		auto best = slice->islands.begin();
 		fl_t best_dist = HUGE_VAL;
@@ -1465,12 +1549,12 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 		island.solid_infill.insert(island.solid_infill.end(), island.sparse_infill.begin(), island.sparse_infill.end());
 		island.sparse_infill.clear();
 		if (config.infill_first && layer_num != 0) {
-			write_infill(island.solid_infill, slice, &island, &m, m.z);
-			write_insets(slice, &island, &m, m.z, config.outside_first || layer_num == 0);
+			plan_infill(island.solid_infill, slice, &island, &m, m.z);
+			plan_insets(slice, &island, &m, m.z, config.outside_first || layer_num == 0);
 		}
 		else {
-			write_insets(slice, &island, &m, m.z, config.outside_first || layer_num == 0);
-			write_infill(island.solid_infill, slice, &island, &m, m.z);
+			plan_insets(slice, &island, &m, m.z, config.outside_first || layer_num == 0);
+			plan_infill(island.solid_infill, slice, &island, &m, m.z);
 		}
 		free(island.insets);
 		free(island.inset_gaps);
@@ -1614,7 +1698,7 @@ int main(int argc, char *argv[])
 	bool do_preview = false;
 
 	/* Parse options */
-	while ((opt = getopt(argc, argv, ":hpo:c:O:l:w:t:s:d:n:r:f:C:x:y:")) != -1) {
+	while ((opt = getopt(argc, argv, ":hpo:c:O:l:w:t:s:d:n:r:f:b:C:x:y:")) != -1) {
 		char *key, *value;
 		int ret;
 		switch (opt) {
@@ -1674,6 +1758,10 @@ int main(int argc, char *argv[])
 			if (set_config_option("floor_thickness", optarg, 0, NULL))
 				return 1;
 			break;
+		case 'b':
+			if (set_config_option("brim_width", optarg, 0, NULL))
+				return 1;
+			break;
 		case 'C':
 			if (set_config_option("coarseness", optarg, 0, NULL))
 				return 1;
@@ -1719,6 +1807,7 @@ int main(int argc, char *argv[])
 		config.cool_off_gcode = strdup(DEFAULT_COOL_OFF_STR);
 	config.x_center += x_translate;
 	config.y_center += y_translate;
+	config.brim_lines = lround(config.brim_width / config.extrusion_width);
 
 	fprintf(stderr, "configuration:\n");
 	fprintf(stderr, "  layer height          = %f\n", config.layer_height);
@@ -1765,6 +1854,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  min layer time        = %f\n", config.min_layer_time);
 	fprintf(stderr, "  layer time samples    = %d\n", config.layer_time_samples);
 	fprintf(stderr, "  min feed rate         = %f\n", config.min_feed_rate);
+	fprintf(stderr, "  brim lines            = %d\n", config.brim_lines);
 	fprintf(stderr, "  material density      = %f\n", config.material_density);
 	fprintf(stderr, "  material cost         = %f\n", config.material_cost);
 #ifdef _OPENMP
