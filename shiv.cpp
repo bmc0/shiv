@@ -461,7 +461,7 @@ static int read_config(const char *path)
 				next = strchr(next + 1, '\n');
 			next = isolate(next, '\n');
 		}
-		if (*key != '\n' && *key != '#') {
+		if (*key != '\0' && *key != '#') {
 			value = isolate(key, '=');
 			if (set_config_option(key, value, i, path))
 				return 2;
