@@ -101,6 +101,7 @@ Option                  | Default value | Description
 `no_solid`              |       `false` | If true, only generate solid fill on the very top and bottom of the model.
 `anchor`                |        `true` | Clip and anchor inset paths.
 `outside_first`         |       `false` | Prefer exterior shells.
+`combine_all`           |       `false` | Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes.
 `fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
 `min_layer_time`        |         `8.0` | Minimum layer time.
 `layer_time_samples`    |           `5` | Number of samples in the layer time moving average.

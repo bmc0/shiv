@@ -129,6 +129,7 @@ static struct {
 	bool no_solid              = false;    /* If true, only generate solid fill on the very top and bottom of the model */
 	bool anchor                = true;     /* Clip and anchor inset paths */
 	bool outside_first         = false;    /* Prefer exterior shells */
+	bool combine_all           = false;    /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
 	fl_t fill_threshold        = 0.2;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
 	fl_t min_layer_time        = 8.0;      /* Slow down if the estimated layer time is less than this value */
 	int layer_time_samples     = 5;        /* Number of samples in the layer time moving average */
@@ -407,6 +408,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "outside_first") == 0) {
 		config.outside_first = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "combine_all") == 0) {
+		config.combine_all = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "fill_threshold") == 0) {
 		config.fill_threshold = atof(value);
@@ -775,12 +779,25 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 			LIST_FOREACH(&oseg, s)
 				poly.push_back(FL_T_TO_INTPOINT(s->x[0], s->y[0]));
 			ClipperLib::CleanPolygon(poly, CLEAN_DIST);
-			/* If we flipped more than half of the segments, the first segment in the outline was probably oriented incorrectly */
-			if (flip_count > segment_count / 2) {
-				DEBUG("reversed outline order at layer %zd\n", slice_index + 1);
-				ClipperLib::ReversePath(poly);
+			if (config.combine_all) {
+				ClipperLib::Paths polys;
+				/* Remove self-intersections */
+				ClipperLib::SimplifyPolygon(poly, polys, ClipperLib::pftEvenOdd);
+				for (ClipperLib::Path &p : polys) {
+					/* Reverse any clockwise outlines */
+					if (!ClipperLib::Orientation(p))
+						ClipperLib::ReversePath(p);
+					outlines.push_back(p);
+				}
 			}
-			outlines.push_back(poly);
+			else {
+				/* If we flipped more than half of the segments, the first segment in the outline was probably oriented incorrectly */
+				if (flip_count > segment_count / 2) {
+					DEBUG("reversed outline order at layer %zd\n", slice_index + 1);
+					ClipperLib::ReversePath(poly);
+				}
+				outlines.push_back(poly);
+			}
 			/* DEBUG("inexact_count = %zd / %zd\n", inexact_count, segment_count); */
 		}
 		next_poly:
@@ -1850,6 +1867,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  no solid              = %s\n", (config.no_solid) ? "true" : "false");
 	fprintf(stderr, "  anchor                = %s\n", (config.anchor) ? "true" : "false");
 	fprintf(stderr, "  outside first         = %s\n", (config.outside_first) ? "true" : "false");
+	fprintf(stderr, "  combine all           = %s\n", (config.combine_all) ? "true" : "false");
 	fprintf(stderr, "  fill threshold        = %f\n", config.fill_threshold);
 	fprintf(stderr, "  min layer time        = %f\n", config.min_layer_time);
 	fprintf(stderr, "  layer time samples    = %d\n", config.layer_time_samples);
