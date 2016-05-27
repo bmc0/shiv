@@ -1837,7 +1837,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  xy scale factor       = %f\n", config.xy_scale_factor);
 	fprintf(stderr, "  z scale factor        = %f\n", config.z_scale_factor);
 	fprintf(stderr, "  x center              = %f\n", config.x_center);
-	fprintf(stderr, "  y center              = %f\n", config.x_center);
+	fprintf(stderr, "  y center              = %f\n", config.y_center);
 	fprintf(stderr, "  packing density       = %f\n", config.packing_density);
 	fprintf(stderr, "  infill density        = %f\n", config.infill_density);
 	fprintf(stderr, "  shells                = %d\n", config.shells);
