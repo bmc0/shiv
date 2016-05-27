@@ -1,8 +1,8 @@
 @echo off
 
-if not defined _MACHINE set _MACHINE="ultra3d"
-if not defined _EXTRUDER set _EXTRUDER="left"
-if not defined _MATERIAL set _MATERIAL="inland_pla"
+if not defined _MACHINE set _MACHINE=ultra3d
+if not defined _EXTRUDER set _EXTRUDER=left
+if not defined _MATERIAL set _MATERIAL=inland_pla
 
 set _INFILE=%1
 set _OUTFILE=%_INFILE:.stl=_s.gcode%
@@ -16,4 +16,4 @@ set params=%params% %1
 goto loop
 :afterloop
 
-shiv.exe -c configs\global -c "configs\\%_MACHINE%\\%_MACHINE%" -c "configs\\%_MACHINE%\\%_EXTRUDER%" -c "configs\\%_MACHINE%\\%_MATERIAL%" -o "%_OUTFILE%" %params% "%_INFILE%"
+shiv.exe -c configs\global -c configs\\%_MACHINE%\\%_MACHINE% -c configs\\%_MACHINE%\\%_EXTRUDER% -c configs\\%_MACHINE%\\%_MATERIAL% -o %_OUTFILE% %params% %_INFILE%
