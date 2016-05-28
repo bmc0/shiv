@@ -129,6 +129,7 @@ static struct {
 	bool no_solid              = false;    /* If true, only generate solid fill on the very top and bottom of the model */
 	bool anchor                = true;     /* Clip and anchor inset paths */
 	bool outside_first         = false;    /* Prefer exterior shells */
+	bool separate_z_travel     = false;    /* Generate a separate z travel move instead of moving all axes together */
 	bool combine_all           = false;    /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
 	enum ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	fl_t fill_threshold        = 0.2;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
@@ -182,7 +183,7 @@ struct island {
 
 struct g_move {
 	fl_t x, y, z, e, feed_rate;
-	bool scalable;
+	bool scalable, is_travel;
 };
 
 struct slice {
@@ -409,6 +410,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "outside_first") == 0) {
 		config.outside_first = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "separate_z_travel") == 0) {
+		config.separate_z_travel = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "combine_all") == 0) {
 		config.combine_all = PARSE_BOOL(value);
@@ -1286,38 +1290,33 @@ static void append_g_move(struct slice *slice, struct g_move &move, fl_t len)
 
 static void linear_move(struct slice *slice, struct island *island, struct machine *m, fl_t x, fl_t y, fl_t z, fl_t extra_e_len, fl_t feed_rate, bool is_travel)
 {
-	struct g_move move = { x, y, z, 0.0, feed_rate, !is_travel };
-	fl_t e_len = 0.0;
+	struct g_move move = { x, y, z, 0.0, feed_rate, !is_travel, is_travel };
 	fl_t len = sqrt((m->x - x) * (m->x - x) + (m->y - y) * (m->y - y) + (m->z - z) * (m->z - z));
 	if (is_travel) {
 		if (!m->is_retracted && config.retract_len > 0.0 && (m->new_island || len > config.retract_threshold || (config.retract_within_island && len > config.retract_min_travel) || (island && crosses_boundary(m, island, x, y)))) {
-			struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false };
+			struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false };
 			append_g_move(slice, retract_move, config.retract_len);
-			m->e -= config.retract_len;
 			m->is_retracted = true;
 		}
 		m->new_island = false;
 	}
 	else {
 		if (m->is_retracted) {
-			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false };
+			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false, false };
 			append_g_move(slice, restart_move, config.retract_len);
-			m->e += config.retract_len;
 			m->is_retracted = false;
 		}
 		move.e = len * config.extrusion_area * config.flow_multiplier / config.material_area;
 	}
 	if (extra_e_len != 0.0) {
-		struct g_move restart_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, false };
+		struct g_move restart_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true, false };
 		append_g_move(slice, restart_move, extra_e_len);
-		m->e += extra_e_len;
 	}
-	if (x != m->x || y != m->y || z != m->z || e_len != 0) {
+	if (x != m->x || y != m->y || z != m->z || move.e != 0) {
 		append_g_move(slice, move, len);
 		m->x = x;
 		m->y = y;
 		m->z = z;
-		m->e += e_len;
 	}
 }
 
@@ -1590,7 +1589,7 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 	}
 	/* We need to retract at the end of each layer */
 	if (!m.is_retracted) {
-		struct g_move retract_move = { m.x, m.y, m.z, -config.retract_len, config.retract_speed, false };
+		struct g_move retract_move = { m.x, m.y, m.z, -config.retract_len, config.retract_speed, false, false };
 		append_g_move(slice, retract_move, config.retract_len);
 	}
 }
@@ -1638,6 +1637,13 @@ static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl
 		feed_rate *= feed_rate_mult;
 		if (feed_rate < config.min_feed_rate)
 			feed_rate = config.min_feed_rate;
+	}
+	if (move->is_travel && move->z != m->z && config.separate_z_travel) {
+		fprintf(f, "G1 Z%.3f", move->z);
+		if (feed_rate != m->feed_rate)
+			fprintf(f, " F%ld", lround(feed_rate * 60.0));
+		fputc('\n', f);
+		m->z = move->z;
 	}
 	fputs("G1", f);
 	if (move->x != m->x)
@@ -1889,6 +1895,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  no solid              = %s\n", (config.no_solid) ? "true" : "false");
 	fprintf(stderr, "  anchor                = %s\n", (config.anchor) ? "true" : "false");
 	fprintf(stderr, "  outside first         = %s\n", (config.outside_first) ? "true" : "false");
+	fprintf(stderr, "  separate z travel     = %s\n", (config.separate_z_travel) ? "true" : "false");
 	fprintf(stderr, "  combine all           = %s\n", (config.combine_all) ? "true" : "false");
 	fprintf(stderr, "  poly_fill_type        = %s\n", get_poly_fill_type_string(config.poly_fill_type));
 	fprintf(stderr, "  fill threshold        = %f\n", config.fill_threshold);
