@@ -130,6 +130,7 @@ static struct {
 	bool anchor                = true;     /* Clip and anchor inset paths */
 	bool outside_first         = false;    /* Prefer exterior shells */
 	bool combine_all           = false;    /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
+	enum ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	fl_t fill_threshold        = 0.2;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
 	fl_t min_layer_time        = 8.0;      /* Slow down if the estimated layer time is less than this value */
 	int layer_time_samples     = 5;        /* Number of samples in the layer time moving average */
@@ -411,6 +412,16 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "combine_all") == 0) {
 		config.combine_all = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "poly_fill_type") == 0) {
+		if (strcmp(value, "even_odd") == 0)
+			config.poly_fill_type = ClipperLib::pftEvenOdd;
+		else if (strcmp(value, "non_zero") == 0)
+			config.poly_fill_type = ClipperLib::pftNonZero;
+		else if (strcmp(value, "positive") == 0)
+			config.poly_fill_type = ClipperLib::pftPositive;
+		else if (strcmp(value, "negative") == 0)
+			config.poly_fill_type = ClipperLib::pftNegative;
 	}
 	else if (strcmp(key, "fill_threshold") == 0) {
 		config.fill_threshold = atof(value);
@@ -807,7 +818,7 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 	ClipperLib::PolyTree tree;
 	ClipperLib::Clipper c;
 	c.AddPaths(outlines, ClipperLib::ptSubject, true);
-	c.Execute(ClipperLib::ctUnion, tree, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+	c.Execute(ClipperLib::ctUnion, tree, config.poly_fill_type, config.poly_fill_type);
 	generate_islands(slice, &tree);
 #if USE_BOUNDING_BOX
 	for (struct island &island : slice->islands)
@@ -1706,6 +1717,17 @@ static int write_gcode(const char *path, struct object *o)
 	return 0;
 }
 
+static const char * get_poly_fill_type_string(ClipperLib::PolyFillType pft)
+{
+	switch (pft) {
+	case ClipperLib::pftEvenOdd:  return "even_odd";
+	case ClipperLib::pftNonZero:  return "non_zero";
+	case ClipperLib::pftPositive: return "positive";
+	case ClipperLib::pftNegative: return "negative";
+	}
+	return NULL;
+}
+
 int main(int argc, char *argv[])
 {
 	int opt;
@@ -1868,6 +1890,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  anchor                = %s\n", (config.anchor) ? "true" : "false");
 	fprintf(stderr, "  outside first         = %s\n", (config.outside_first) ? "true" : "false");
 	fprintf(stderr, "  combine all           = %s\n", (config.combine_all) ? "true" : "false");
+	fprintf(stderr, "  poly_fill_type        = %s\n", get_poly_fill_type_string(config.poly_fill_type));
 	fprintf(stderr, "  fill threshold        = %f\n", config.fill_threshold);
 	fprintf(stderr, "  min layer time        = %f\n", config.min_layer_time);
 	fprintf(stderr, "  layer time samples    = %d\n", config.layer_time_samples);
