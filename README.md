@@ -102,6 +102,7 @@ Option                  | Default value | Description
 `anchor`                |        `true` | Clip and anchor inset paths.
 `outside_first`         |       `false` | Prefer exterior shells.
 `separate_z_travel`     |       `false` | Generate a separate z travel move instead of moving all axes together.
+`comb`                  |       `false` | Avoid crossing perimeters (disabled by default until more testing is done).
 `combine_all`           |       `false` | Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes.
 `poly_fill_type`        |    `non_zero` | Poly fill type for union. Sometimes `even_odd` is useful for broken models with self-intersections and/or incorrect normals.
 `fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
