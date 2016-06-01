@@ -179,7 +179,7 @@ struct island {
 	ClipperLib::Paths infill_insets;
 	ClipperLib::Paths solid_infill;
 	ClipperLib::Paths sparse_infill;
-	ClipperLib::Paths boundaries;
+	ClipperLib::Paths boundaries;  /* simplified outside boundary */
 	struct cint_rect box;  /* bounding box */
 };
 
@@ -876,10 +876,8 @@ static void generate_insets(struct slice *slice)
 		ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST * 4.0);
 
 		done:
-		if (config.shells > 0)
-			island.boundaries = island.insets[0];
-		else
-			island.boundaries = island.infill_insets;
+		island.boundaries = (config.shells > 0) ? island.insets[0] : island.infill_insets;
+		ClipperLib::CleanPolygons(island.boundaries, MAXIMUM(config.extrusion_width * 0.25 * SCALE_CONSTANT, CLEAN_DIST * 4.0));
 		if (config.shells > 1 && config.fill_inset_gaps) {
 			ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 			ClipperLib::Paths hole;
@@ -930,7 +928,7 @@ static void generate_brim(struct object *o)
 	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 	ClipperLib::Paths brim_first;
 	for (struct island &island : o->slices[0].islands)
-		co.AddPaths(island.boundaries, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
 	co.Execute(brim_first, lround(config.extrusion_width * config.brim_lines * SCALE_CONSTANT));
 	co.Clear();
 	o->brim.insert(o->brim.end(), brim_first.begin(), brim_first.end());
@@ -944,8 +942,12 @@ static void generate_brim(struct object *o)
 #else
 	for (int i = 1; i <= config.brim_lines; ++i) {
 		ClipperLib::Paths tmp;
-		for (struct island &island : o->slices[0].islands)
-			tmp.insert(tmp.end(), island.boundaries.begin(), island.boundaries.end());
+		for (struct island &island : o->slices[0].islands) {
+			if (config.shells > 0)
+				tmp.insert(tmp.end(), island.insets[0].begin(), island.insets[0].end());
+			else
+				tmp.insert(tmp.end(), island.infill_insets.begin(), island.infill_insets.end());
+		}
 		do_offset(tmp, tmp, config.extrusion_width * i, true);
 		o->brim.insert(o->brim.end(), tmp.begin(), tmp.end());
 	}
@@ -1680,7 +1682,7 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 				}
 			}
 			else {
-				for (ClipperLib::Path &p : it->boundaries) {
+				for (ClipperLib::Path &p : (config.shells > 0) ? it->insets[0] : it->infill_insets) {
 					for (size_t i = 0; i < p.size(); ++i) {
 						fl_t x = ((fl_t) p[i].X) / SCALE_CONSTANT;
 						fl_t y = ((fl_t) p[i].Y) / SCALE_CONSTANT;
