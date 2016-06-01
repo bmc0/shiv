@@ -1359,7 +1359,7 @@ static fl_t get_partial_path_len(ClipperLib::Path &p, size_t start, size_t end, 
 
 static void combed_travel_move(struct slice *slice, struct island *island, struct machine *m, fl_t x, fl_t y, fl_t z, fl_t feed_rate)
 {
-	if (!config.comb) {
+	if (!config.comb || !island) {
 		linear_move(slice, island, m, x, y, z, 0.0, feed_rate, true);
 		return;
 	}
