@@ -1274,10 +1274,10 @@ static bool intersects(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, Clipper
 	return ccw(a, c, d) != ccw(b, c, d) && ccw(a, b, c) != ccw(a, b, d);
 }
 
-static ssize_t get_boundary_crossing(ClipperLib::IntPoint &p1, ClipperLib::IntPoint &p2, ClipperLib::Path &p)
+static ssize_t get_boundary_crossing(ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1, ClipperLib::Path &p)
 {
 	for (size_t i = 1; i < p.size(); ++i) {
-		if (intersects(p[i - 1], p[i], p1, p2))
+		if (intersects(p[i - 1], p[i], p0, p1))
 			return (ssize_t) i - 1;
 	}
 	return -1;
@@ -1285,10 +1285,10 @@ static ssize_t get_boundary_crossing(ClipperLib::IntPoint &p1, ClipperLib::IntPo
 
 static bool crosses_boundary(struct machine *m, struct island *island, fl_t x, fl_t y)
 {
-	ClipperLib::IntPoint p1((ClipperLib::cInt) lround(m->x * SCALE_CONSTANT), (ClipperLib::cInt) lround(m->y * SCALE_CONSTANT));
-	ClipperLib::IntPoint p2((ClipperLib::cInt) lround(x * SCALE_CONSTANT), (ClipperLib::cInt) lround(y * SCALE_CONSTANT));
+	ClipperLib::IntPoint p0((ClipperLib::cInt) lround(m->x * SCALE_CONSTANT), (ClipperLib::cInt) lround(m->y * SCALE_CONSTANT));
+	ClipperLib::IntPoint p1((ClipperLib::cInt) lround(x * SCALE_CONSTANT), (ClipperLib::cInt) lround(y * SCALE_CONSTANT));
 	for (ClipperLib::Path &p : island->boundaries) {
-		if (get_boundary_crossing(p1, p2, p) >= 0)
+		if (get_boundary_crossing(p0, p1, p) >= 0)
 			return true;
 	}
 	return false;
@@ -1339,21 +1339,17 @@ static fl_t get_partial_path_len(ClipperLib::Path &p, size_t start, size_t end, 
 	fl_t x0 = ((fl_t) p[start].X) / SCALE_CONSTANT;
 	fl_t y0 = ((fl_t) p[start].Y) / SCALE_CONSTANT;
 	size_t i = start;
-	if (reverse)
-		i = (i < 1) ? p.size() - 1 : i - 1;
-	else
-		i = (i >= p.size() - 1) ? 0 : i + 1;
-	while (i != end) {
+	do {
+		if (reverse)
+			i = (i < 1) ? p.size() - 1 : i - 1;
+		else
+			i = (i >= p.size() - 1) ? 0 : i + 1;
 		fl_t x1 = ((fl_t) p[i].X) / SCALE_CONSTANT;
 		fl_t y1 = ((fl_t) p[i].Y) / SCALE_CONSTANT;
 		l += sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
 		x0 = x1;
 		y0 = y1;
-		if (reverse)
-			i = (i < 1) ? p.size() - 1 : i - 1;
-		else
-			i = (i >= p.size() - 1) ? 0 : i + 1;
-	}
+	} while (i != end);
 	return l;
 }
 
@@ -1367,13 +1363,13 @@ static void combed_travel_move(struct slice *slice, struct island *island, struc
 	fl_t start_x = m->x;
 	fl_t start_y = m->y;
 	next_bound:
-	ClipperLib::IntPoint p1((ClipperLib::cInt) lround(start_x * SCALE_CONSTANT), (ClipperLib::cInt) lround(start_y * SCALE_CONSTANT));
-	ClipperLib::IntPoint p2((ClipperLib::cInt) lround(x * SCALE_CONSTANT), (ClipperLib::cInt) lround(y * SCALE_CONSTANT));
+	ClipperLib::IntPoint p0((ClipperLib::cInt) lround(start_x * SCALE_CONSTANT), (ClipperLib::cInt) lround(start_y * SCALE_CONSTANT));
+	ClipperLib::IntPoint p1((ClipperLib::cInt) lround(x * SCALE_CONSTANT), (ClipperLib::cInt) lround(y * SCALE_CONSTANT));
 	auto bound = boundaries.end();
 	size_t start_idx = 0;
 	fl_t best_dist = HUGE_VAL;
 	for (auto it = boundaries.begin(); it != boundaries.end(); ++it) {
-		if (get_boundary_crossing(p1, p2, *it) >= 0) {
+		if (get_boundary_crossing(p0, p1, *it) >= 0) {
 			ClipperLib::Path &p = *it;
 			/* Find boundary point closest to start point */
 			for (size_t i = 0; i < p.size(); ++i) {
@@ -1436,6 +1432,9 @@ static void combed_travel_move(struct slice *slice, struct island *island, struc
 			else
 				i = (i >= p.size() - 1) ? 0 : i + 1;
 		}
+		x1 = ((fl_t) p[end_idx].X) / SCALE_CONSTANT;
+		y1 = ((fl_t) p[end_idx].Y) / SCALE_CONSTANT;
+		linear_move(slice, NULL, m, x1, y1, z, 0.0, feed_rate, true);
 		start_x = x1;
 		start_y = y1;
 		boundaries.erase(bound);
