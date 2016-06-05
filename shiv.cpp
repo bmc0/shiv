@@ -179,7 +179,7 @@ struct island {
 	ClipperLib::Paths infill_insets;
 	ClipperLib::Paths solid_infill;
 	ClipperLib::Paths sparse_infill;
-	ClipperLib::Paths boundaries;  /* simplified outside boundary */
+	ClipperLib::Paths comb_boundaries;  /* simplified outside boundary */
 	struct cint_rect box;  /* bounding box */
 };
 
@@ -876,8 +876,10 @@ static void generate_insets(struct slice *slice)
 		ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST * 4.0);
 
 		done:
-		island.boundaries = (config.shells > 0) ? island.insets[0] : island.infill_insets;
-		ClipperLib::CleanPolygons(island.boundaries, MAXIMUM(config.extrusion_width * 0.25 * SCALE_CONSTANT, CLEAN_DIST * 4.0));
+		if (config.comb) {
+			island.comb_boundaries = (config.shells > 0) ? island.insets[0] : island.infill_insets;
+			ClipperLib::CleanPolygons(island.comb_boundaries, MAXIMUM(config.extrusion_width * 0.25 * SCALE_CONSTANT, CLEAN_DIST * 4.0));
+		}
 		if (config.shells > 1 && config.fill_inset_gaps) {
 			ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 			ClipperLib::Paths hole;
@@ -1287,7 +1289,7 @@ static bool crosses_boundary(struct machine *m, struct island *island, fl_t x, f
 {
 	ClipperLib::IntPoint p0((ClipperLib::cInt) lround(m->x * SCALE_CONSTANT), (ClipperLib::cInt) lround(m->y * SCALE_CONSTANT));
 	ClipperLib::IntPoint p1((ClipperLib::cInt) lround(x * SCALE_CONSTANT), (ClipperLib::cInt) lround(y * SCALE_CONSTANT));
-	for (ClipperLib::Path &p : island->boundaries) {
+	for (ClipperLib::Path &p : (config.shells > 0) ? island->insets[0] : island->infill_insets) {
 		if (get_boundary_crossing(p0, p1, p) >= 0)
 			return true;
 	}
@@ -1359,7 +1361,7 @@ static void combed_travel_move(struct slice *slice, struct island *island, struc
 		linear_move(slice, island, m, x, y, z, 0.0, feed_rate, true);
 		return;
 	}
-	ClipperLib::Paths boundaries = island->boundaries;
+	ClipperLib::Paths boundaries = island->comb_boundaries;
 	fl_t start_x = m->x;
 	fl_t start_y = m->y;
 	next_bound:
