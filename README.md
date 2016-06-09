@@ -104,8 +104,16 @@ Option                  | Default value | Description
 `separate_z_travel`     |       `false` | Generate a separate z travel move instead of moving all axes together.
 `comb`                  |       `false` | Avoid crossing perimeters (disabled by default until more testing is done).
 `combine_all`           |       `false` | Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes.
+`generate_support`      |       `false` | Generate support structure.
+`support_everywhere`    |       `false` | False means only touching build plate.
+`solid_support_base`    |       `false` | Make supports solid at layer 0.
 `poly_fill_type`        |    `non_zero` | Poly fill type for union. Sometimes `even_odd` is useful for broken models with self-intersections and/or incorrect normals.
 `fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
+`support_angle`         |        `60.0` | Angle threshold for support.
+`support_margin`        |         `1.0` | Horizontal spacing between support and model, in units of `edge_width`.
+`support_xy_expansion`  |         `2.0` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
+`support_density`       |         `0.3` | Support structure density.
+`support_flow_mult`     |        `0.85` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove.
 `min_layer_time`        |         `8.0` | Minimum layer time.
 `layer_time_samples`    |           `5` | Number of samples in the layer time moving average.
 `min_feed_rate`         |        `10.0` | Minimum feed rate.
@@ -191,6 +199,6 @@ Preview slices of `infile.stl` in gnuplot:
 ### Feature wishlist:
 
 * ASCII STL, AMF, OBJ, etc. support (only reads binary STL currently)
-* Support structure generation
+* Support structure generation (in progress)
 * Bridge detection
 * Multi-extrusion support
