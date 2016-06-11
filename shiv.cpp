@@ -130,6 +130,7 @@ static struct {
 	bool no_solid              = false;    /* If true, only generate solid fill on the very top and bottom of the model */
 	bool anchor                = true;     /* Clip and anchor inset paths */
 	bool outside_first         = false;    /* Prefer exterior shells */
+	bool solid_infill_first    = false;    /* Print solid infill before sparse infill */
 	bool separate_z_travel     = false;    /* Generate a separate z travel move instead of moving all axes together */
 	bool comb                  = false;    /* Avoid crossing boundaries */
 	bool combine_all           = false;    /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
@@ -139,10 +140,10 @@ static struct {
 	enum ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	fl_t fill_threshold        = 0.2;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
 	fl_t support_angle         = 60.0;     /* Angle threshold for support */
-	fl_t support_margin        = 1.0;      /* Horizontal spacing between support and model, in units of edge_width */
+	fl_t support_margin        = 0.8;      /* Horizontal spacing between support and model, in units of edge_width */
 	fl_t support_xy_expansion  = 2.0;      /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
 	fl_t support_density       = 0.3;      /* Support structure density */
-	fl_t support_flow_mult     = 0.85;     /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. */
+	fl_t support_flow_mult     = 0.75;     /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. */
 	fl_t min_layer_time        = 8.0;      /* Slow down if the estimated layer time is less than this value */
 	int layer_time_samples     = 5;        /* Number of samples in the layer time moving average */
 	fl_t min_feed_rate         = 10.0;
@@ -427,6 +428,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "outside_first") == 0) {
 		config.outside_first = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "solid_infill_first") == 0) {
+		config.solid_infill_first = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "separate_z_travel") == 0) {
 		config.separate_z_travel = PARSE_BOOL(value);
@@ -1169,11 +1173,11 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 	ClipperLib::Clipper c;
 	ClipperLib::Paths clip_paths;
 	for (struct island &island : o->slices[slice_index - 1].islands)
-		co.AddPaths(island.outlines, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
 	co.Execute(clip_paths, FL_T_TO_CINT(tan(config.support_angle / 180.0 * M_PI) * config.layer_height));
 	co.Clear();
 	for (struct island &island : o->slices[slice_index].islands)
-		c.AddPaths(island.outlines, ClipperLib::ptSubject, true);
+		c.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, ClipperLib::ptSubject, true);
 	c.AddPaths(clip_paths, ClipperLib::ptClip, true);
 	c.Execute(ClipperLib::ctDifference, o->slices[slice_index].layer_support_map, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 	c.Clear();
@@ -1282,10 +1286,6 @@ static void slice_object(struct object *o)
 #endif
 	for (i = 0; i < o->n; ++i)
 		find_segments(o->slices, &o->t[i]);
-#ifdef _OPENMP
-	for (i = 0; i < o->n_slices; ++i)
-		omp_destroy_lock(&o->slices[i].lock);
-#endif
 	fputs(" done\n", stderr);
 	free(o->t);
 	fputs("  generate outlines...", stderr);
@@ -1344,6 +1344,10 @@ static void slice_object(struct object *o)
 		generate_brim(o);
 		fputs(" done\n", stderr);
 	}
+#ifdef _OPENMP
+	for (i = 0; i < o->n_slices; ++i)
+		omp_destroy_lock(&o->slices[i].lock);
+#endif
 
 	fprintf(stderr, "sliced in %fs\n",
 		(double) std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000000.0);
@@ -1920,16 +1924,22 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 		}
 		struct island &island = *best;
 		m.new_island = true;
-		/* Concat sparse infill into solid infill vector so the infill pathing is planned together */
-		island.solid_infill.insert(island.solid_infill.end(), island.sparse_infill.begin(), island.sparse_infill.end());
-		island.sparse_infill.clear();
+		if (!config.solid_infill_first) {
+			/* Concat sparse infill into solid infill vector so the infill pathing is planned together */
+			island.solid_infill.insert(island.solid_infill.end(), island.sparse_infill.begin(), island.sparse_infill.end());
+			island.sparse_infill.clear();
+		}
 		if (config.infill_first && layer_num != 0) {
 			plan_infill(island.solid_infill, slice, &island, &m, m.z);
+			if (config.solid_infill_first)
+				plan_infill(island.sparse_infill, slice, &island, &m, m.z);
 			plan_insets(slice, &island, &m, m.z, config.outside_first || layer_num == 0);
 		}
 		else {
 			plan_insets(slice, &island, &m, m.z, config.outside_first || layer_num == 0);
 			plan_infill(island.solid_infill, slice, &island, &m, m.z);
+			if (config.solid_infill_first)
+				plan_infill(island.sparse_infill, slice, &island, &m, m.z);
 		}
 		free(island.insets);
 		free(island.inset_gaps);
@@ -2243,6 +2253,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  no solid              = %s\n", (config.no_solid) ? "true" : "false");
 	fprintf(stderr, "  anchor                = %s\n", (config.anchor) ? "true" : "false");
 	fprintf(stderr, "  outside first         = %s\n", (config.outside_first) ? "true" : "false");
+	fprintf(stderr, "  solid infill first    = %s\n", (config.solid_infill_first) ? "true" : "false");
 	fprintf(stderr, "  separate z travel     = %s\n", (config.separate_z_travel) ? "true" : "false");
 	fprintf(stderr, "  comb                  = %s\n", (config.comb) ? "true" : "false");
 	fprintf(stderr, "  combine all           = %s\n", (config.combine_all) ? "true" : "false");

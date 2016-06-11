@@ -101,6 +101,7 @@ Option                  | Default value | Description
 `no_solid`              |       `false` | If true, only generate solid fill on the very top and bottom of the model.
 `anchor`                |        `true` | Clip and anchor inset paths.
 `outside_first`         |       `false` | Prefer exterior shells.
+`solid_infill_first`    |       `false` | Print solid infill before sparse infill.
 `separate_z_travel`     |       `false` | Generate a separate z travel move instead of moving all axes together.
 `comb`                  |       `false` | Avoid crossing perimeters (disabled by default until more testing is done).
 `combine_all`           |       `false` | Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes.
