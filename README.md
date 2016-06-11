@@ -111,10 +111,10 @@ Option                  | Default value | Description
 `poly_fill_type`        |    `non_zero` | Poly fill type for union. Sometimes `even_odd` is useful for broken models with self-intersections and/or incorrect normals.
 `fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
 `support_angle`         |        `60.0` | Angle threshold for support.
-`support_margin`        |         `1.0` | Horizontal spacing between support and model, in units of `edge_width`.
+`support_margin`        |         `0.8` | Horizontal spacing between support and model, in units of `edge_width`.
 `support_xy_expansion`  |         `2.0` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
 `support_density`       |         `0.3` | Support structure density.
-`support_flow_mult`     |        `0.85` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove.
+`support_flow_mult`     |        `0.75` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove.
 `min_layer_time`        |         `8.0` | Minimum layer time.
 `layer_time_samples`    |           `5` | Number of samples in the layer time moving average.
 `min_feed_rate`         |        `10.0` | Minimum feed rate.
