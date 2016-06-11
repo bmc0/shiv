@@ -1189,8 +1189,8 @@ static void generate_support_boundaries(struct slice *slice)
 {
 	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 	for (struct island &island : slice->islands)
-		co.AddPaths(island.outlines, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
-	co.Execute(slice->support_boundaries, FL_T_TO_CINT(config.support_margin * config.edge_width + config.edge_width / 2.0));
+		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	co.Execute(slice->support_boundaries, FL_T_TO_CINT(config.support_margin * config.edge_width + config.edge_width));
 }
 
 static void generate_support_maps(struct object *o, ssize_t slice_index)
