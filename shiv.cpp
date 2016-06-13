@@ -1442,14 +1442,37 @@ static void preview_slices(struct object *o)
 	}
 }
 
-static bool ccw(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, ClipperLib::IntPoint &c)
+/* 0 is colinear, 1 is counter-clockwise and -1 is clockwise */
+static int triplet_orientation(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, ClipperLib::IntPoint &c)
 {
-	return (c.Y - a.Y) * (b.X - a.X) > (b.Y - a.Y) * (c.X - a.X);
+	ClipperLib::cInt v = a.X * b.Y - b.X * a.Y + b.X * c.Y - c.X * b.Y + c.X * a.Y - a.X * c.Y;  /* Calculate signed area * 2 */
+	return (v == 0) ? 0 : (v > 0) ? 1 : -1;
+}
+
+static int is_on_segment(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, ClipperLib::IntPoint &c)
+{
+	if (b.X <= MAXIMUM(a.X, c.X) && b.X >= MINIMUM(a.X, c.X) && b.Y <= MAXIMUM(a.Y, c.Y) && b.Y >= MINIMUM(a.Y, c.Y))
+		return true;
+	return false;
 }
 
 static bool intersects(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, ClipperLib::IntPoint &c, ClipperLib::IntPoint &d)
 {
-	return ccw(a, c, d) != ccw(b, c, d) && ccw(a, b, c) != ccw(a, b, d);
+	int o1 = triplet_orientation(a, b, c);
+	int o2 = triplet_orientation(a, b, d);
+	int o3 = triplet_orientation(c, d, a);
+	int o4 = triplet_orientation(c, d, b);
+	if (o1 != o2 && o3 != o4)
+		return true;
+	if (o1 == 0 && is_on_segment(a, c, b))
+		return true;
+	if (o2 == 0 && is_on_segment(a, d, b))
+		return true;
+	if (o3 == 0 && is_on_segment(c, a, d))
+		return true;
+	if (o4 == 0 && is_on_segment(c, b, d))
+		return true;
+	return false;
 }
 
 static ssize_t get_boundary_crossing(ClipperLib::Path &p, ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1)
