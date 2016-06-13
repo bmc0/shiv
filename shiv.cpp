@@ -197,7 +197,7 @@ struct island {
 struct g_move {
 	ClipperLib::cInt x, y, z;
 	fl_t e, feed_rate;
-	bool scalable, is_travel;
+	bool scalable, is_travel, is_restart;
 };
 
 struct slice {
@@ -1483,11 +1483,11 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 {
 	fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
 	fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
-	struct g_move move = { x, y, z, 0.0, feed_rate, !is_travel, is_travel };
+	struct g_move move = { x, y, z, 0.0, feed_rate, !is_travel, is_travel, false };
 	fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 	if (is_travel) {
 		if (!m->is_retracted && config.retract_len > 0.0 && (m->new_island || len > config.retract_threshold || (config.retract_within_island && len > config.retract_min_travel) || (island && crosses_boundary(m, island, x, y)))) {
-			struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false };
+			struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false, false };
 			append_g_move(slice, retract_move, config.retract_len);
 			m->is_retracted = true;
 		}
@@ -1495,14 +1495,14 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 	}
 	else {
 		if (m->is_retracted) {
-			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false, false };
+			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false, false, true };
 			append_g_move(slice, restart_move, config.retract_len);
 			m->is_retracted = false;
 		}
 		move.e = len * config.extrusion_area * config.flow_multiplier * flow_adjust / config.material_area;
 	}
 	if (extra_e_len != 0.0) {
-		struct g_move restart_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true, false };
+		struct g_move restart_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true, false, true };
 		append_g_move(slice, restart_move, extra_e_len);
 	}
 	if (x != m->x || y != m->y || z != m->z || move.e != 0.0) {
@@ -1947,7 +1947,7 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 	}
 	/* We need to retract at the end of each layer */
 	if (!m.is_retracted) {
-		struct g_move retract_move = { m.x, m.y, m.z, -config.retract_len, config.retract_speed, false, false };
+		struct g_move retract_move = { m.x, m.y, m.z, -config.retract_len, config.retract_speed, false, false, false };
 		append_g_move(slice, retract_move, config.retract_len);
 	}
 }
@@ -1993,8 +1993,9 @@ static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl
 	fl_t feed_rate = move->feed_rate;
 	if (move->scalable) {
 		feed_rate *= feed_rate_mult;
-		if (feed_rate < config.min_feed_rate)
-			feed_rate = config.min_feed_rate;
+		fl_t min_feed_rate = (move->is_restart) ? config.min_feed_rate * config.extrusion_area / config.material_area : config.min_feed_rate;
+		if (feed_rate < min_feed_rate)
+			feed_rate = min_feed_rate;
 	}
 	if (move->is_travel && move->z != m->z && config.separate_z_travel) {
 		fprintf(f, "G1 Z%.3f", CINT_TO_FL_T(move->z));
@@ -2012,8 +2013,10 @@ static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl
 		fprintf(f, " Z%.3f", CINT_TO_FL_T(move->z));
 	if (move->e != 0.0)
 		fprintf(f, " E%.5f", m->e + move->e);
-	if (feed_rate != m->feed_rate)
-		fprintf(f, " F%ld", lround(feed_rate * 60.0));
+	if (feed_rate != m->feed_rate) {
+		long int feed_rate_min = lround(feed_rate * 60.0);
+		fprintf(f, " F%ld", (feed_rate_min < 1) ? 1 : feed_rate_min);
+	}
 	fputc('\n', f);
 	m->x = move->x;
 	m->y = move->y;
