@@ -115,7 +115,7 @@ static struct {
 	fl_t restart_speed         = -1.0;     /* -1 means same as retract_speed */
 	fl_t retract_min_travel    = 1.6;
 	fl_t retract_threshold     = 8.0;      /* Unconditional retraction threshold */
-	fl_t retract_within_island = false;
+	bool retract_within_island = false;
 	int cool_layer             = 1;        /* Turn on part cooling at this layer */
 	char *start_gcode          = NULL;
 	char *end_gcode            = NULL;
