@@ -87,6 +87,7 @@ Option                  | Default value | Description
 `retract_min_travel`    |         `1.6` | Minimum travel for retraction when not crossing a boundary. Has no effect if `retract_within_island` is false.
 `retract_threshold`     |         `8.0` | Unconditional retraction threshold.
 `retract_within_island` |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
+`wipe_len`              |         `0.0` | Extra travel distance at the end of a shell.
 `cool_layer`            |           `1` | Turn on part cooling at this layer (numbered from zero). Set to a negative number to disable cooling.
 `start_gcode`           |        `NULL` | Prepend this G-code to beginning of the output file.
 `end_gcode`             |        `NULL` | Append this G-code to the end of the output file.
