@@ -1486,6 +1486,8 @@ static ssize_t get_boundary_crossing(ClipperLib::Path &p, ClipperLib::IntPoint &
 		if (intersects(p[i - 1], p[i], p0, p1))
 			return (ssize_t) i - 1;
 	}
+	if (intersects(p[p.size() - 1], p[0], p0, p1))
+		return p.size() - 1;
 	return -1;
 }
 
