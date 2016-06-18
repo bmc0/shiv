@@ -95,6 +95,7 @@ Option                  | Default value | Description
 `cool_off_gcode`        |        `M107` | G-code to turn off cooling.
 `temp`                  |       `220.0` | Hotend temperature.
 `bed_temp`              |        `65.0` | Bed temperature.
+`strict_shell_order`    |       `false` | Always do insets in order within an island.
 `infill_first`          |       `false` | Do infill before shells.
 `align_seams`           |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
 `clean_insets`          |        `true` | Do `ClipperLib::CleanPolygon()` on all insets (only the initial outline is cleaned if this is false).

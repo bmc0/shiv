@@ -124,6 +124,7 @@ static struct {
 	char *cool_off_gcode       = NULL;
 	fl_t temp                  = 220.0;    /* Hotend temperature */
 	fl_t bed_temp              = 65.0;
+	bool strict_shell_order    = false;    /* Always do insets in order within an island */
 	bool infill_first          = false;    /* Do infill before shells */
 	bool align_seams           = true;     /* Align seams to the lower left corner */
 	bool clean_insets          = true;     /* Do ClipperLib::CleanPolygon operation on all insets (only the initial outline is cleaned if this is false) */
@@ -412,6 +413,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "bed_temp") == 0) {
 		config.bed_temp = atof(value);
+	}
+	else if (strcmp(key, "strict_shell_order") == 0) {
+		config.strict_shell_order = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "infill_first") == 0) {
 		config.infill_first = PARSE_BOOL(value);
@@ -1838,7 +1842,7 @@ static void plan_support(struct slice *slice, struct machine *m, ClipperLib::cIn
 	}
 }
 
-static void plan_insets(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, bool outside_first)
+static void plan_insets_weighted(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, bool outside_first)
 {
 	if (config.shells > 0) {
 		int inset_num;
@@ -1900,6 +1904,57 @@ static void plan_insets(struct slice *slice, struct island *island, struct machi
 			}
 		} while (inset_num != -1);
 	}
+}
+
+static void plan_insets_strict_order(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, bool outside_first)
+{
+	if (config.shells > 0) {
+		int i = (outside_first) ? 0 : config.shells - 1;
+		while (i >= 0 && i < config.shells) {
+			if (island->insets[i].empty()) {
+				i = (outside_first) ? i + 1 : i - 1;
+				continue;
+			}
+			auto best = island->insets[i].end();
+			fl_t best_dist = HUGE_VAL;
+			size_t start_idx = 0;
+			fl_t m_x = CINT_TO_FL_T(m->x), m_y = CINT_TO_FL_T(m->y);
+			if (config.align_seams) {
+				for (auto it = island->insets[i].begin(); it != island->insets[i].end(); ++it) {
+					fl_t x = CINT_TO_FL_T((*it)[0].X), y = CINT_TO_FL_T((*it)[0].Y);
+					fl_t dist = (x - m_x) * (x - m_x) + (y - m_y) * (y - m_y);
+					if (dist < best_dist) {
+						best_dist = dist;
+						best = it;
+						start_idx = 0;
+					}
+				}
+			}
+			else {
+				for (auto it = island->insets[i].begin(); it != island->insets[i].end(); ++it) {
+					for (size_t k = 0; k < (*it).size(); ++k) {
+						fl_t x = CINT_TO_FL_T((*it)[k].X), y = CINT_TO_FL_T((*it)[k].Y);
+						fl_t dist = (x - m_x) * (x - m_x) + (y - m_y) * (y - m_y);
+						if (dist < best_dist) {
+							best_dist = dist;
+							best = it;
+							start_idx = k;
+						}
+					}
+				}
+			}
+			generate_closed_path_moves(*best, start_idx, slice, island, m, z, (i == 0) ? config.perimeter_feed_rate : config.loop_feed_rate, false);
+			island->insets[i].erase(best);
+		}
+	}
+}
+
+static void plan_insets(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, bool outside_first)
+{
+	if (config.strict_shell_order)
+		plan_insets_strict_order(slice, island, m, z, outside_first);
+	else
+		plan_insets_weighted(slice, island, m, z, outside_first);
 }
 
 static void plan_infill(ClipperLib::Paths &paths, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z)
@@ -2310,6 +2365,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  cool layer            = %d\n", config.cool_layer);
 	fprintf(stderr, "  temp                  = %f\n", config.temp);
 	fprintf(stderr, "  bed temp              = %f\n", config.bed_temp);
+	fprintf(stderr, "  strict shell order    = %s\n", (config.strict_shell_order) ? "true" : "false");
 	fprintf(stderr, "  infill first          = %s\n", (config.infill_first) ? "true" : "false");
 	fprintf(stderr, "  align seams           = %s\n", (config.align_seams) ? "true" : "false");
 	fprintf(stderr, "  clean insets          = %s\n", (config.clean_insets) ? "true" : "false");
