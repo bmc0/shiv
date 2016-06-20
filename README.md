@@ -69,7 +69,10 @@ Option                  | Default value | Description
 `z_scale_factor`        |         `1.0` | The object is scaled by this ratio in the z axis to compensate for shrinkage. Should probably be left at 1 unless a high temperature heated chamber is used.
 `x_center`              |         `0.0` | X coordinate to center the object on.
 `y_center`              |         `0.0` | Y coordinate to center the object on.
-`packing_density`       |        `0.99` | Solid packing density. Should be slightly less than 1. 0.99 seems to work for PLA.
+`packing_density`       |        `0.98` | Solid packing density. Should be slightly less than 1. 0.98 seems to work for PLA.
+`edge_packing_density`  |        `0.92` | Packing density of the constrained half of the outer perimeter.
+`seam_packing_density`  |        `0.90` | Packing density of the ends of each shell (the seam).
+`extra_offset`          |         `0.0` | Offset the object by this distance in the xy plane.
 `infill_density`        |         `0.2` | Sparse infill density.
 `shells`                |           `2` | Number of loops/perimeters/shells (whatever you want to call them).
 `roof_thickness`        |         `0.8` | Solid surface thickness when looking upwards.
@@ -95,6 +98,7 @@ Option                  | Default value | Description
 `cool_off_gcode`        |        `M107` | G-code to turn off cooling.
 `temp`                  |       `220.0` | Hotend temperature.
 `bed_temp`              |        `65.0` | Bed temperature.
+`remove_edge_overlap`   |       `false` | Remove overlap on the outer perimeter (useful for high dimensional accuracy, may not be desired for aesthetic pieces).
 `strict_shell_order`    |       `false` | Always do insets in order within an island.
 `infill_first`          |       `false` | Do infill before shells.
 `align_seams`           |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.

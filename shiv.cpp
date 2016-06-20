@@ -32,7 +32,6 @@
 
 #define SCALE_CONSTANT             1000  /* Clipper uses integers, so we need to scale floating point values. Precision is 1 / SCALE_CONSTANT units. */
 #define CLEAN_DIST                 (1.41421356 * config.coarseness)
-#define REMOVE_OVERLAPPING_SHELLS  true
 #define CLIPPER_MITER_LIMIT        2.0
 #define CLIPPER_ARC_TOLERANCE      10.0
 #define CLIPPER_JOIN_TYPE          ClipperLib::jtSquare
@@ -95,7 +94,12 @@ static struct {
 	fl_t z_scale_factor        = 1.0;      /* Scale object in z axis by this ratio to compensate for shrinkage */
 	fl_t x_center              = 0.0;
 	fl_t y_center              = 0.0;
-	fl_t packing_density       = 0.99;     /* Solid packing density (should be slightly less than 1; 0.99 seems to work well for PLA) */
+	fl_t packing_density       = 0.98;     /* Solid packing density (should be slightly less than 1; 0.98 seems to work well for PLA) */
+	fl_t edge_packing_density  = 0.92;     /* Packing density of the contranied half of the outer perimeter */
+	fl_t seam_packing_density  = 0.90;     /* Packing density of the ends of each shell (the seam) */
+	fl_t extra_offset          = 0.0;      /* Offset the object by this distance in the xy plane */
+	fl_t edge_offset;                      /* Offset of the outer perimeter (calculated) */
+	fl_t shell_clip;                       /* Shells are clipped by this much (calculated from seam_packing_density) */
 	fl_t infill_density        = 0.2;      /* Sparse infill density */
 	int shells                 = 2;        /* Number of loops/perimeters/shells (whatever you want to call them) */
 	fl_t roof_thickness        = 0.8;      /* Solid surface thickness when looking upwards */
@@ -124,6 +128,7 @@ static struct {
 	char *cool_off_gcode       = NULL;
 	fl_t temp                  = 220.0;    /* Hotend temperature */
 	fl_t bed_temp              = 65.0;
+	bool remove_edge_overlap   = false;    /* Remove overlap on the outer perimeter (useful for high dimensional accuracy, may not be desired for aesthetic pieces) */
 	bool strict_shell_order    = false;    /* Always do insets in order within an island */
 	bool infill_first          = false;    /* Do infill before shells */
 	bool align_seams           = true;     /* Align seams to the lower left corner */
@@ -318,6 +323,21 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 		if (config.packing_density < M_PI / 4)
 			fprintf(stderr, "warning: packing density probably shouldn't be < %f\n", M_PI / 4);
 	}
+	else if (strcmp(key, "edge_packing_density") == 0) {
+		config.edge_packing_density = atof(value);
+		CHECK_VALUE(config.edge_packing_density > 0.0 && config.edge_packing_density <= 1.0, "edge packing density", "within (0, 1]");
+		if (config.edge_packing_density < M_PI / 4)
+			fprintf(stderr, "warning: edge packing density probably shouldn't be < %f\n", M_PI / 4);
+	}
+	else if (strcmp(key, "seam_packing_density") == 0) {
+		config.seam_packing_density = atof(value);
+		CHECK_VALUE(config.seam_packing_density > 0.0 && config.seam_packing_density <= 1.0, "seam packing density", "within (0, 1]");
+		if (config.seam_packing_density < M_PI / 4)
+			fprintf(stderr, "warning: seam packing density probably shouldn't be < %f\n", M_PI / 4);
+	}
+	else if (strcmp(key, "extra_offset") == 0) {
+		config.extra_offset = atof(value);
+	}
 	else if (strcmp(key, "infill_density") == 0) {
 		config.infill_density = atof(value);
 		CHECK_VALUE(config.infill_density >= 0.0 && config.infill_density <= 1.0, "infill density", "within [0, 1]");
@@ -413,6 +433,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "bed_temp") == 0) {
 		config.bed_temp = atof(value);
+	}
+	else if (strcmp(key, "remove_edge_overlap") == 0) {
+		config.remove_edge_overlap = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "strict_shell_order") == 0) {
 		config.strict_shell_order = PARSE_BOOL(value);
@@ -913,13 +936,12 @@ static void generate_insets(struct slice *slice)
 		island.insets = (ClipperLib::Paths *) calloc(config.shells, sizeof(ClipperLib::Paths));
 		if (!island.insets)
 			die(e_nomem, 2);
-		fl_t edge_offset = -config.edge_width / 2.0;
 		if (config.shells > 0) {
-			do_offset(island.outlines, island.insets[0], edge_offset, false);
+			do_offset(island.outlines, island.insets[0], config.edge_offset + config.extra_offset, config.remove_edge_overlap);
 			if (config.clean_insets)
 				ClipperLib::CleanPolygons(island.insets[0], CLEAN_DIST);
 			for (int i = 1; i < config.shells; ++i) {
-				do_offset(island.insets[i - 1], island.insets[i], -config.extrusion_width, REMOVE_OVERLAPPING_SHELLS);
+				do_offset(island.insets[i - 1], island.insets[i], -config.extrusion_width, true);
 				if (config.clean_insets)
 					ClipperLib::CleanPolygons(island.insets[i], CLEAN_DIST);
 				if (island.insets[i].size() == 0)  /* break if nothing is being generated */
@@ -928,7 +950,8 @@ static void generate_insets(struct slice *slice)
 			do_offset(island.insets[config.shells - 1], island.infill_insets, -config.extrusion_width / 2.0, false);
 		}
 		else {
-			do_offset(island.outlines, island.infill_insets, edge_offset, false);
+			/* The offset distance here is not *technically* correct, but I'm not sure one can expect high dimensional accuracy when only printing infill anyway... */
+			do_offset(island.outlines, island.infill_insets, config.edge_offset + config.extra_offset, false);
 		}
 		ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST * 4.0);
 
@@ -1199,7 +1222,7 @@ static void generate_support_boundaries(struct slice *slice)
 	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 	for (struct island &island : slice->islands)
 		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
-	co.Execute(slice->support_boundaries, FL_T_TO_CINT(config.support_margin * config.edge_width + config.edge_width));
+	co.Execute(slice->support_boundaries, FL_T_TO_CINT(config.support_margin * config.edge_width - config.edge_offset));
 }
 
 static void generate_support_maps(struct object *o, ssize_t slice_index)
@@ -1697,6 +1720,7 @@ static size_t clip_path(ClipperLib::Path &p, size_t start_idx, fl_t clip)
 static void generate_wipe_path_moves(ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
 {
 	fl_t l = 0.0;
+	start_idx = (start_idx == 0) ? p.size() - 1 : start_idx - 1;  /* We want to start at the *end* of the loop */
 	fl_t x0 = CINT_TO_FL_T(p[start_idx].X), y0 = CINT_TO_FL_T(p[start_idx].Y);
 	size_t i = (start_idx + 1 == p.size()) ? 0 : start_idx + 1;
 	m->is_retracted = true;  /* Make sure we don't retract */
@@ -1728,14 +1752,23 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 		return;
 	bool first_point = true;
 	bool do_anchor = false, did_anchor = false;
-	if (config.anchor && path_len_is_greater_than(p, config.extrusion_width * 3.0)) {
-		start_idx = clip_path(p, start_idx, config.extrusion_width / 2.0);
+	fl_t total_clip = 0.0;
+	if (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * 4.0))
+		total_clip += config.shell_clip;
+	if (config.anchor && path_len_is_greater_than(p, total_clip * 4.0 + config.extrusion_width * 2.0)) {
 		do_anchor = true;
+		total_clip += config.extrusion_width / 2.0;
 	}
+	if (total_clip > 0.0)
+		start_idx = clip_path(p, start_idx, total_clip);
+	else
+		p.push_back(p[0]);  /* So the loop works the same for both clipped and non-clipped paths */
 	size_t k = start_idx;
 	do {
-		if (first_point)
+		if (first_point) {
 			combed_travel_move(slice, island, m, p[k].X, p[k].Y, z, config.travel_feed_rate);
+			first_point = false;
+		}
 		else {
 			fl_t anchor_e_len = 0.0;
 			if (do_anchor && !did_anchor) {
@@ -1744,11 +1777,8 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 			}
 			linear_move(slice, island, m, p[k].X, p[k].Y, z, anchor_e_len, feed_rate, 1.0, true, false);
 		}
-		first_point = false;
 		k = (k + 1 == p.size()) ? 0 : k + 1;
 	} while (k != start_idx);
-	if (!do_anchor)  /* If the path was not clipped, the start and end points are the same, so we need to do one more extrusion move back to the starting point. */
-		linear_move(slice, island, m, p[start_idx].X, p[start_idx].Y, z, 0.0, feed_rate, 1.0, true, false);
 	if (!no_wipe && config.wipe_len > 0.0)
 		generate_wipe_path_moves(p, start_idx, slice, island, m, z, feed_rate);
 }
@@ -1772,7 +1802,7 @@ static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 			}
 		}
 		if (best != o->brim.end()) {
-			generate_closed_path_moves(*best, start_idx, &o->slices[0], NULL, m, z, config.perimeter_feed_rate, true);
+			generate_closed_path_moves(*best, start_idx, &o->slices[0], NULL, m, z, config.perimeter_feed_rate, false);
 			o->brim.erase(best);
 		}
 	}
@@ -2318,7 +2348,9 @@ int main(int argc, char *argv[])
 	config.roof_layers = lround(config.roof_thickness / config.layer_height);
 	config.floor_layers = lround(config.floor_thickness / config.layer_height);
 	config.extrusion_area = config.extrusion_width * config.layer_height * config.packing_density;
-	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI / 4)) / config.layer_height + config.layer_height;
+	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI / 4.0)) / config.layer_height + config.layer_height;
+	config.edge_offset = config.edge_width / -2.0 - (config.extrusion_area * (1.0 - config.edge_packing_density)) / config.layer_height;
+	config.shell_clip = (config.extrusion_width * config.packing_density) * (config.extrusion_width * config.packing_density) * M_PI / 4.0 * (1.0 - config.seam_packing_density) / (config.extrusion_width * config.packing_density);
 	config.material_area = M_PI * config.material_diameter * config.material_diameter / 4.0;
 	if (config.restart_speed == -1.0)
 		config.restart_speed = config.retract_speed;
@@ -2343,6 +2375,11 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  x_center              = %f\n", config.x_center);
 	fprintf(stderr, "  y_center              = %f\n", config.y_center);
 	fprintf(stderr, "  packing_density       = %f\n", config.packing_density);
+	fprintf(stderr, "  edge_packing_density  = %f\n", config.edge_packing_density);
+	fprintf(stderr, "  seam_packing_density  = %f\n", config.seam_packing_density);
+	fprintf(stderr, "  extra_offset          = %f\n", config.extra_offset);
+	fprintf(stderr, " *edge_offset           = %f\n", config.edge_offset);
+	fprintf(stderr, " *shell_clip            = %f\n", config.shell_clip);
 	fprintf(stderr, "  infill_density        = %f\n", config.infill_density);
 	fprintf(stderr, "  shells                = %d\n", config.shells);
 	fprintf(stderr, "  roof_thickness        = %f\n", config.roof_thickness);
@@ -2367,6 +2404,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  cool_layer            = %d\n", config.cool_layer);
 	fprintf(stderr, "  temp                  = %f\n", config.temp);
 	fprintf(stderr, "  bed_temp              = %f\n", config.bed_temp);
+	fprintf(stderr, "  remove_edge_overlap   = %s\n", (config.remove_edge_overlap) ? "true" : "false");
 	fprintf(stderr, "  strict_shell_order    = %s\n", (config.strict_shell_order) ? "true" : "false");
 	fprintf(stderr, "  infill_first          = %s\n", (config.infill_first) ? "true" : "false");
 	fprintf(stderr, "  align_seams           = %s\n", (config.align_seams) ? "true" : "false");
