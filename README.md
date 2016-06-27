@@ -98,7 +98,7 @@ Option                  | Default value | Description
 `cool_off_gcode`        |        `M107` | G-code to turn off cooling.
 `temp`                  |       `220.0` | Hotend temperature.
 `bed_temp`              |        `65.0` | Bed temperature.
-`remove_edge_overlap`   |       `false` | Remove overlap on the outer perimeter (useful for high dimensional accuracy, may not be desired for aesthetic pieces).
+`edge_overlap`          |         `0.5` | Allowable edge path overlap in units of extrusion_width.
 `strict_shell_order`    |       `false` | Always do insets in order within an island.
 `infill_first`          |       `false` | Do infill before shells.
 `align_seams`           |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.

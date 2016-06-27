@@ -128,7 +128,7 @@ static struct {
 	char *cool_off_gcode       = NULL;
 	fl_t temp                  = 220.0;    /* Hotend temperature */
 	fl_t bed_temp              = 65.0;
-	bool remove_edge_overlap   = false;    /* Remove overlap on the outer perimeter (useful for high dimensional accuracy, may not be desired for aesthetic pieces) */
+	fl_t edge_overlap          = 0.5;      /* Allowable edge path overlap in units of extrusion_width */
 	bool strict_shell_order    = false;    /* Always do insets in order within an island */
 	bool infill_first          = false;    /* Do infill before shells */
 	bool align_seams           = true;     /* Align seams to the lower left corner */
@@ -434,8 +434,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "bed_temp") == 0) {
 		config.bed_temp = atof(value);
 	}
-	else if (strcmp(key, "remove_edge_overlap") == 0) {
-		config.remove_edge_overlap = PARSE_BOOL(value);
+	else if (strcmp(key, "edge_overlap") == 0) {
+		config.edge_overlap = atof(value);
+		CHECK_VALUE(config.edge_overlap >= 0.0 && config.edge_overlap <= 1.0, "edge overlap", "within [0, 1]");
 	}
 	else if (strcmp(key, "strict_shell_order") == 0) {
 		config.strict_shell_order = PARSE_BOOL(value);
@@ -915,12 +916,22 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 #endif
 }
 
-static void do_offset(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t dist, bool remove_overlap)
+static void remove_overlap(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t ratio)
 {
 	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 	co.AddPaths(src, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
-	if (remove_overlap) {
-		fl_t extra = (dist > 0) ? (config.extrusion_width / 2.0) : (config.extrusion_width / -2.0);
+	co.Execute(dest, FL_T_TO_CINT(config.extrusion_width * ratio / -2.0));
+	co.Clear();
+	co.AddPaths(dest, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	co.Execute(dest, FL_T_TO_CINT(config.extrusion_width * ratio / 2.0));
+}
+
+static void do_offset(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t dist, fl_t overlap_removal_ratio)
+{
+	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
+	co.AddPaths(src, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	if (overlap_removal_ratio > 0.0) {
+		fl_t extra = (dist > 0.0) ? (config.extrusion_width * overlap_removal_ratio / 2.0) : (config.extrusion_width * overlap_removal_ratio / -2.0);
 		co.Execute(dest, FL_T_TO_CINT(dist + extra));
 		co.Clear();
 		co.AddPaths(dest, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
@@ -937,21 +948,21 @@ static void generate_insets(struct slice *slice)
 		if (!island.insets)
 			die(e_nomem, 2);
 		if (config.shells > 0) {
-			do_offset(island.outlines, island.insets[0], config.edge_offset + config.extra_offset, config.remove_edge_overlap);
+			do_offset(island.outlines, island.insets[0], config.edge_offset + config.extra_offset, 1.0 - config.edge_overlap);
 			if (config.clean_insets)
 				ClipperLib::CleanPolygons(island.insets[0], CLEAN_DIST);
 			for (int i = 1; i < config.shells; ++i) {
-				do_offset(island.insets[i - 1], island.insets[i], -config.extrusion_width, true);
+				do_offset(island.insets[i - 1], island.insets[i], -config.extrusion_width, 1.0);
 				if (config.clean_insets)
 					ClipperLib::CleanPolygons(island.insets[i], CLEAN_DIST);
 				if (island.insets[i].size() == 0)  /* break if nothing is being generated */
 					goto done;
 			}
-			do_offset(island.insets[config.shells - 1], island.infill_insets, -config.extrusion_width / 2.0, false);
+			do_offset(island.insets[config.shells - 1], island.infill_insets, -config.extrusion_width / 2.0, 0.0);
 		}
 		else {
 			/* The offset distance here is not *technically* correct, but I'm not sure one can expect high dimensional accuracy when only printing infill anyway... */
-			do_offset(island.outlines, island.infill_insets, config.edge_offset + config.extra_offset, false);
+			do_offset(island.outlines, island.infill_insets, config.edge_offset + config.extra_offset, 0.0);
 		}
 		ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST * 4.0);
 
@@ -1111,10 +1122,8 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 		ClipperLib::Clipper c;
 		ClipperLib::PolyTree s;
 		if (config.infill_density == 1.0 || slice_index < config.floor_layers || slice_index + config.roof_layers >= o->n_slices) {
-			if (config.fill_threshold > 0.0) {
-				do_offset(island.infill_insets, island.infill_insets, -config.extrusion_width * config.fill_threshold / 2.0, false);
-				do_offset(island.infill_insets, island.infill_insets, config.extrusion_width * config.fill_threshold / 2.0, false);
-			}
+			if (config.fill_threshold > 0.0)
+				remove_overlap(island.infill_insets, island.infill_insets, config.fill_threshold);
 			c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
 			c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
 			if (config.fill_inset_gaps)
@@ -1150,10 +1159,8 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			sc.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
 			sc.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			sc.Clear();
-			if (config.fill_threshold > 0.0) {
-				do_offset(s_tmp, s_tmp, -config.extrusion_width * config.fill_threshold / 2.0, false);
-				do_offset(s_tmp, s_tmp, config.extrusion_width * config.fill_threshold / 2.0, false);
-			}
+			if (config.fill_threshold > 0.0)
+				remove_overlap(s_tmp, s_tmp, config.fill_threshold);
 			c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
 			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			if (config.fill_inset_gaps)
@@ -1166,20 +1173,16 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			sc.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			sc.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
 			sc.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-			if (config.fill_threshold > 0.0) {
-				do_offset(s_tmp, s_tmp, -config.extrusion_width * config.fill_threshold / 2.0, false);
-				do_offset(s_tmp, s_tmp, config.extrusion_width * config.fill_threshold / 2.0, false);
-			}
+			if (config.fill_threshold > 0.0)
+				remove_overlap(s_tmp, s_tmp, config.fill_threshold);
 			c.AddPaths(o->sparse_infill_pattern, ClipperLib::ptSubject, false);
 			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
 		}
 		else {
-			if (config.fill_threshold > 0.0) {
-				do_offset(island.infill_insets, island.infill_insets, -config.extrusion_width * config.fill_threshold / 2.0, false);
-				do_offset(island.infill_insets, island.infill_insets, config.extrusion_width * config.fill_threshold / 2.0, false);
-			}
+			if (config.fill_threshold > 0.0)
+				remove_overlap(island.infill_insets, island.infill_insets, config.fill_threshold);
 			c.AddPaths(o->sparse_infill_pattern, ClipperLib::ptSubject, false);
 			c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
@@ -1295,7 +1298,7 @@ static void generate_brim(struct object *o)
 			tmp.insert(tmp.end(), o->slices[0].support_map.begin(), o->slices[0].support_map.end());
 			ClipperLib::SimplifyPolygons(tmp, ClipperLib::pftNonZero);
 		}
-		do_offset(tmp, tmp, config.extrusion_width * i, true);
+		do_offset(tmp, tmp, config.extrusion_width * i, 1.0);
 		o->brim.insert(o->brim.end(), tmp.begin(), tmp.end());
 	}
 }
@@ -2404,7 +2407,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  cool_layer            = %d\n", config.cool_layer);
 	fprintf(stderr, "  temp                  = %f\n", config.temp);
 	fprintf(stderr, "  bed_temp              = %f\n", config.bed_temp);
-	fprintf(stderr, "  remove_edge_overlap   = %s\n", (config.remove_edge_overlap) ? "true" : "false");
+	fprintf(stderr, "  edge_overlap          = %f\n", config.edge_overlap);
 	fprintf(stderr, "  strict_shell_order    = %s\n", (config.strict_shell_order) ? "true" : "false");
 	fprintf(stderr, "  infill_first          = %s\n", (config.infill_first) ? "true" : "false");
 	fprintf(stderr, "  align_seams           = %s\n", (config.align_seams) ? "true" : "false");
