@@ -574,7 +574,7 @@ static int read_config(const char *path)
 	for (ssize_t i = 1; *key != '\0'; ++i) {
 		next = strchr(key, '\n');
 		if (next) {
-			while (next && (*(next + 1) == ' ' || *(next + 1) == '\t'))
+			while (next && (next[1] == ' ' || next[1] == '\t'))
 				next = strchr(next + 1, '\n');
 			next = isolate(next, '\n');
 		}
