@@ -148,6 +148,8 @@ static struct {
 	fl_t fill_threshold        = 0.2;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
 	fl_t support_angle         = 60.0;     /* Angle threshold for support */
 	fl_t support_margin        = 0.8;      /* Horizontal spacing between support and model, in units of edge_width */
+	int support_vert_margin    = 1;        /* Vertical spacing between support and model, in layers */
+	int interface_layers       = 1;        /* Number of solid support interface layers */
 	fl_t support_xy_expansion  = 2.0;      /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
 	fl_t support_density       = 0.3;      /* Support structure density */
 	fl_t support_flow_mult     = 0.75;     /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. */
@@ -179,6 +181,7 @@ struct object {
 	ClipperLib::Paths sparse_infill_pattern;
 	ClipperLib::Paths brim;
 	ClipperLib::Paths support_pattern;
+	ClipperLib::Paths support_interface_pattern;
 };
 
 struct segment {
@@ -221,6 +224,7 @@ struct slice {
 	ClipperLib::Paths support_map;
 	ClipperLib::Paths support_boundaries;
 	ClipperLib::Paths support_lines;
+	ClipperLib::Paths support_interface_lines;
 	fl_t layer_time;
 };
 
@@ -504,6 +508,14 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "support_margin") == 0) {
 		config.support_margin = atof(value);
 		CHECK_VALUE(config.support_margin >= 0.0, "support margin", ">= 0");
+	}
+	else if (strcmp(key, "support_vert_margin") == 0) {
+		config.support_vert_margin = atoi(value);
+		CHECK_VALUE(config.support_vert_margin >= 0, "support vertical margin", ">= 0");
+	}
+	else if (strcmp(key, "interface_layers") == 0) {
+		config.interface_layers = atoi(value);
+		CHECK_VALUE(config.interface_layers >= 0, "interface layers", ">= 0");
 	}
 	else if (strcmp(key, "support_xy_expansion") == 0) {
 		config.support_xy_expansion = atof(value);
@@ -1107,6 +1119,17 @@ static void generate_infill_patterns(struct object *o)
 			line[0].Y += support_move;
 			line[1].Y += support_move;
 		}
+
+		const ClipperLib::cInt support_interface_move = FL_T_TO_CINT(config.extrusion_width);
+		line[0].X = min_x;
+		line[0].Y = min_y;
+		line[1].X = min_x;
+		line[1].Y = max_y;
+		while (line[0].X < max_x) {
+			o->support_interface_pattern.push_back(line);
+			line[0].X += support_interface_move;
+			line[1].X += support_interface_move;
+		}
 	}
 }
 
@@ -1202,7 +1225,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 
 static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 {
-	if (slice_index < 1)
+	if (slice_index < config.support_vert_margin + 1)
 		return;
 	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 	ClipperLib::Clipper c;
@@ -1235,7 +1258,8 @@ static void generate_support_maps(struct object *o, ssize_t slice_index)
 			ClipperLib::Clipper c;
 			ClipperLib::Paths tmp;
 			c.AddPath(p, ClipperLib::ptSubject, true);
-			c.AddPaths(o->slices[k].support_boundaries, ClipperLib::ptClip, true);
+			for (int i = (k >= config.support_vert_margin) ? -config.support_vert_margin : -k; k + i <= slice_index && i <= config.support_vert_margin; ++i)
+				c.AddPaths(o->slices[k + i].support_boundaries, ClipperLib::ptClip, true);
 			c.Execute(ClipperLib::ctDifference, tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			if (tmp.size() >= 1) {
 			#ifdef _OPENMP
@@ -1275,13 +1299,52 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 {
 	ClipperLib::Clipper c;
 	ClipperLib::PolyTree s;
-	if (config.solid_support_base && slice_index == 0)
-		c.AddPaths(o->solid_infill_patterns[0], ClipperLib::ptSubject, false);
-	else
+	if (config.solid_support_base && slice_index == 0) {
+		c.AddPaths(o->solid_infill_patterns[1], ClipperLib::ptSubject, false);
+		c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
+		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		ClipperLib::OpenPathsFromPolyTree(s, slice->support_interface_lines);
+	}
+	else if (config.interface_layers > 0) {
+		ClipperLib::Clipper sc;
+		ClipperLib::Paths s_tmp;
+		sc.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
+		for (int i = (slice_index > config.interface_layers) ? -config.interface_layers : -slice_index; slice_index + i < o->n_slices && i <= config.interface_layers; ++i) {
+			if (i != 0) {
+				sc.AddPaths(o->slices[slice_index + i].support_map, ClipperLib::ptClip, true);
+				sc.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+				sc.Clear();
+				if (i != config.interface_layers)
+					sc.AddPaths(s_tmp, ClipperLib::ptSubject, true);
+			}
+		}
+		if (config.fill_threshold > 0.0)
+			remove_overlap(s_tmp, s_tmp, config.fill_threshold);
 		c.AddPaths(o->support_pattern, ClipperLib::ptSubject, false);
-	c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
-	c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-	ClipperLib::OpenPathsFromPolyTree(s, slice->support_lines);
+		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		ClipperLib::OpenPathsFromPolyTree(s, slice->support_lines);
+		c.Clear();
+
+		sc.AddPaths(s_tmp, ClipperLib::ptClip, true);
+		sc.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
+		sc.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		sc.Clear();
+		if (config.fill_threshold > 0.0)
+			remove_overlap(s_tmp, s_tmp, config.fill_threshold);
+		c.AddPaths(o->support_interface_pattern, ClipperLib::ptSubject, false);
+		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		ClipperLib::OpenPathsFromPolyTree(s, s_tmp);
+		c.Clear();
+		slice->support_lines.insert(slice->support_lines.end(), s_tmp.begin(), s_tmp.end());
+	}
+	else {
+		c.AddPaths(o->support_pattern, ClipperLib::ptSubject, false);
+		c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
+		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		ClipperLib::OpenPathsFromPolyTree(s, slice->support_lines);
+	}
 }
 
 static void generate_brim(struct object *o)
@@ -1466,6 +1529,11 @@ static void preview_slices(struct object *o)
 		}
 		/* Draw support lines */
 		for (ClipperLib::Path &path : o->slices[i].support_lines) {
+			for (ClipperLib::IntPoint &p : path)
+				fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / SCALE_CONSTANT, ((double) p.Y) / SCALE_CONSTANT);
+			putc('\n', stdout);
+		}
+		for (ClipperLib::Path &path : o->slices[i].support_interface_lines) {
 			for (ClipperLib::IntPoint &p : path)
 				fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / SCALE_CONSTANT, ((double) p.Y) / SCALE_CONSTANT);
 			putc('\n', stdout);
@@ -1811,17 +1879,17 @@ static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 	}
 }
 
-static void plan_support(struct slice *slice, struct machine *m, ClipperLib::cInt z, ssize_t layer_num)
+static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct machine *m, ClipperLib::cInt z, ssize_t layer_num, fl_t connect_threshold)
 {
-	bool first = true, connect = false;
+	bool first = true;
 	fl_t flow_adjust = (layer_num > 0) ? config.support_flow_mult : 1.0;
 	fl_t feed_rate = (layer_num > 0) ? config.infill_feed_rate : config.perimeter_feed_rate;
-	while (!slice->support_lines.empty()) {
-		auto best = slice->support_lines.end();
+	while (!lines.empty()) {
+		auto best = lines.end();
 		fl_t best_dist = HUGE_VAL;
 		bool flip_points = false;
 		fl_t m_x = CINT_TO_FL_T(m->x), m_y = CINT_TO_FL_T(m->y);
-		for (auto it = slice->support_lines.begin(); it != slice->support_lines.end(); ++it) {
+		for (auto it = lines.begin(); it != lines.end(); ++it) {
 			fl_t x0 = CINT_TO_FL_T((*it)[0].X), y0 = CINT_TO_FL_T((*it)[0].Y);
 			fl_t x1 = CINT_TO_FL_T((*it)[1].X), y1 = CINT_TO_FL_T((*it)[1].Y);
 			fl_t dist0 = (x0 - m_x) * (x0 - m_x) + (y0 - m_y) * (y0 - m_y);
@@ -1833,7 +1901,7 @@ static void plan_support(struct slice *slice, struct machine *m, ClipperLib::cIn
 				best = it;
 			}
 		}
-		if (best != slice->support_lines.end()) {
+		if (best != lines.end()) {
 			ClipperLib::Path &p = *best;
 			fl_t x0 = CINT_TO_FL_T(p[0].X), y0 = CINT_TO_FL_T(p[0].Y);
 			fl_t x1 = CINT_TO_FL_T(p[1].X), y1 = CINT_TO_FL_T(p[1].Y);
@@ -1850,10 +1918,7 @@ static void plan_support(struct slice *slice, struct machine *m, ClipperLib::cIn
 						}
 					}
 				}
-				if (layer_num == 0 && config.solid_support_base)
-					connect = (!first && !crosses_boundary && best_dist < config.extrusion_width * 1.9);
-				else
-					connect = (!first && !crosses_boundary && best_dist < config.extrusion_width / config.support_density * 10.0);
+				bool connect = (!first && !crosses_boundary && best_dist < connect_threshold);
 				if (flip_points) {
 					if (connect)
 						linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false);
@@ -1870,7 +1935,7 @@ static void plan_support(struct slice *slice, struct machine *m, ClipperLib::cIn
 				}
 				first = false;
 			}
-			slice->support_lines.erase(best);
+			lines.erase(best);
 		}
 	}
 }
@@ -2040,8 +2105,10 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 		m.y -= FL_T_TO_CINT(config.brim_lines * config.extrusion_width);
 		plan_brim(o, &m, m.z);
 	}
-	if (config.generate_support)
-		plan_support(slice, &m, m.z, layer_num);
+	if (config.generate_support) {
+		plan_support(slice, slice->support_interface_lines, &m, m.z, layer_num, config.extrusion_width * 1.9);
+		plan_support(slice, slice->support_lines, &m, m.z, layer_num, (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0);
+	}
 	while (slice->islands.size() > 0) {
 		auto best = slice->islands.begin();
 		fl_t best_dist = HUGE_VAL;
@@ -2427,6 +2494,8 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  fill_threshold        = %f\n", config.fill_threshold);
 	fprintf(stderr, "  support_angle         = %f\n", config.support_angle);
 	fprintf(stderr, "  support_margin        = %f\n", config.support_margin);
+	fprintf(stderr, "  support_vert_margin   = %d\n", config.support_vert_margin);
+	fprintf(stderr, "  interface_layers      = %d\n", config.interface_layers);
 	fprintf(stderr, "  support_xy_expansion  = %f\n", config.support_xy_expansion);
 	fprintf(stderr, "  support_density       = %f\n", config.support_density);
 	fprintf(stderr, "  support_flow_mult     = %f\n", config.support_flow_mult);

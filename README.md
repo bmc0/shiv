@@ -118,6 +118,8 @@ Option                  | Default value | Description
 `fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
 `support_angle`         |        `60.0` | Angle threshold for support.
 `support_margin`        |         `0.8` | Horizontal spacing between support and model, in units of `edge_width`.
+`support_vert_margin`   |           `1` | Vertical spacing between support and model, in layers.
+`interface_layers`      |           `1` | Number of solid support interface layers.
 `support_xy_expansion`  |         `2.0` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
 `support_density`       |         `0.3` | Support structure density.
 `support_flow_mult`     |        `0.75` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove.
