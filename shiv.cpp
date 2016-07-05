@@ -59,7 +59,7 @@ static const char usage_string[] =
 	"            [-s scale_factor] [-d infill_density] [-n shells]\n"
 	"            [-r roof_thickness] [-f floor_thickness] [-b brim_width]\n"
 	"            [-C coarseness] [-x x_translate] [-y y_translate]\n"
-	"            binary_stl_file\n"
+	"            [-z z_chop] binary_stl_file\n"
 	"\n"
 	"flags:\n"
 	"  -h                    show this help\n"
@@ -78,7 +78,8 @@ static const char usage_string[] =
 	"  -b brim_width         brim width\n"
 	"  -C coarseness         output coarseness\n"
 	"  -x x_translate        translate object in the x-axis\n"
-	"  -y y_translate        translate object in the y-axis\n";
+	"  -y y_translate        translate object in the y-axis\n"
+	"  -z z_chop             sink object into build plate\n";
 
 /* default config */
 #define DEFAULT_COOL_ON_STR  "M106 S255"
@@ -2315,11 +2316,11 @@ int main(int argc, char *argv[])
 	int opt;
 	char *path, *output_path = NULL;
 	struct object o;
-	fl_t scale_factor = 1.0, x_translate = 0.0, y_translate = 0.0;
+	fl_t scale_factor = 1.0, x_translate = 0.0, y_translate = 0.0, z_chop = 0.0;
 	bool do_preview = false;
 
 	/* Parse options */
-	while ((opt = getopt(argc, argv, ":hpo:c:O:l:w:t:s:d:n:r:f:b:C:x:y:")) != -1) {
+	while ((opt = getopt(argc, argv, ":hpo:c:O:l:w:t:s:d:n:r:f:b:C:x:y:z:")) != -1) {
 		char *key, *value;
 		int ret;
 		switch (opt) {
@@ -2392,6 +2393,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'y':
 			y_translate = atof(optarg);
+			break;
+		case 'z':
+			z_chop = atof(optarg);
 			break;
 		default:
 			if (opt == ':')
@@ -2523,7 +2527,7 @@ int main(int argc, char *argv[])
 
 	fprintf(stderr, "scale and translate object...\n");
 	scale_object(&o, config.xy_scale_factor * scale_factor, config.xy_scale_factor * scale_factor, config.z_scale_factor * scale_factor);
-	translate_object(&o, -o.c.x + config.x_center, -o.c.y + config.y_center, o.h / 2 - o.c.z);
+	translate_object(&o, -o.c.x + config.x_center, -o.c.y + config.y_center, o.h / 2 - o.c.z - z_chop);
 	fprintf(stderr, "  center   = (%f, %f, %f)\n", o.c.x, o.c.y, o.c.z);
 	fprintf(stderr, "  height   = %f\n", o.h);
 	fprintf(stderr, "  width    = %f\n", o.w);

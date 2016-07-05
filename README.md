@@ -33,7 +33,7 @@ OpenMP is enabled by default for both platforms.
 	     [-s scale_factor] [-d infill_density] [-n shells]
 	     [-r roof_thickness] [-f floor_thickness] [-b brim_width]
 	     [-C coarseness] [-x x_translate] [-y y_translate]
-	     binary_stl_file
+	     [-z z_chop] binary_stl_file
 
 #### Flags:
 
@@ -56,6 +56,7 @@ Flag                 | Description
 `-C coarseness`      | Output coarseness
 `-x x_translate`     | Translate object in the x-axis
 `-y y_translate`     | Translate object in the y-axis
+`-z z_chop`          | Sink object into build plate
 
 #### Full options list:
 
