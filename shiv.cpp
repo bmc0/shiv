@@ -148,7 +148,7 @@ static struct {
 	enum ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	fl_t fill_threshold        = 0.2;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
 	fl_t support_angle         = 60.0;     /* Angle threshold for support */
-	fl_t support_margin        = 0.8;      /* Horizontal spacing between support and model, in units of edge_width */
+	fl_t support_margin        = 0.6;      /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin    = 1;        /* Vertical spacing between support and model, in layers */
 	int interface_layers       = 1;        /* Number of solid support interface layers */
 	fl_t support_xy_expansion  = 2.0;      /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
@@ -1249,7 +1249,7 @@ static void generate_support_boundaries(struct slice *slice)
 	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 	for (struct island &island : slice->islands)
 		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
-	co.Execute(slice->support_boundaries, FL_T_TO_CINT(config.support_margin * config.edge_width - config.edge_offset));
+	co.Execute(slice->support_boundaries, FL_T_TO_CINT((0.5 + config.support_margin) * config.edge_width - config.edge_offset));
 }
 
 static void generate_support_maps(struct object *o, ssize_t slice_index)

@@ -118,7 +118,7 @@ Option                  | Default value | Description
 `poly_fill_type`        |    `non_zero` | Poly fill type for union. Sometimes `even_odd` is useful for broken models with self-intersections and/or incorrect normals.
 `fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
 `support_angle`         |        `60.0` | Angle threshold for support.
-`support_margin`        |         `0.8` | Horizontal spacing between support and model, in units of `edge_width`.
+`support_margin`        |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
 `support_vert_margin`   |           `1` | Vertical spacing between support and model, in layers.
 `interface_layers`      |           `1` | Number of solid support interface layers.
 `support_xy_expansion`  |         `2.0` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
