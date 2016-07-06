@@ -1880,7 +1880,7 @@ static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 	}
 }
 
-static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct machine *m, ClipperLib::cInt z, ssize_t layer_num, fl_t connect_threshold)
+static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct machine *m, ClipperLib::cInt z, ssize_t layer_num, fl_t min_len, fl_t connect_threshold)
 {
 	bool first = true;
 	fl_t flow_adjust = (layer_num > 0) ? config.support_flow_mult : 1.0;
@@ -1907,7 +1907,7 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 			fl_t x0 = CINT_TO_FL_T(p[0].X), y0 = CINT_TO_FL_T(p[0].Y);
 			fl_t x1 = CINT_TO_FL_T(p[1].X), y1 = CINT_TO_FL_T(p[1].Y);
 			fl_t len = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
-			if (len > config.extrusion_width * 2.0) {
+			if (len > min_len) {
 				bool crosses_boundary = false;
 				if (!first) {
 					ClipperLib::IntPoint p0(m->x, m->y);
@@ -2107,8 +2107,8 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 		plan_brim(o, &m, m.z);
 	}
 	if (config.generate_support) {
-		plan_support(slice, slice->support_interface_lines, &m, m.z, layer_num, config.extrusion_width * 1.9);
-		plan_support(slice, slice->support_lines, &m, m.z, layer_num, (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0);
+		plan_support(slice, slice->support_interface_lines, &m, m.z, layer_num, config.extrusion_width, config.extrusion_width * 1.9);
+		plan_support(slice, slice->support_lines, &m, m.z, layer_num, config.extrusion_width * 2.0, (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0);
 	}
 	while (slice->islands.size() > 0) {
 		auto best = slice->islands.begin();
