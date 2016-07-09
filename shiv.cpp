@@ -2204,7 +2204,7 @@ static void write_gcode_string(const char *s, FILE *f)
 	fputc('\n', f);
 }
 
-static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl_t feed_rate_mult)
+static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl_t feed_rate_mult, bool force_xyz)
 {
 	fl_t feed_rate = move->feed_rate;
 	if (move->scalable) {
@@ -2221,11 +2221,11 @@ static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl
 		m->z = move->z;
 	}
 	fputs("G1", f);
-	if (move->x != m->x)
+	if (force_xyz || move->x != m->x)
 		fprintf(f, " X%.3f", CINT_TO_FL_T(move->x));
-	if (move->y != m->y)
+	if (force_xyz || move->y != m->y)
 		fprintf(f, " Y%.3f", CINT_TO_FL_T(move->y));
-	if (move->z != m->z)
+	if (force_xyz || move->z != m->z)
 		fprintf(f, " Z%.3f", CINT_TO_FL_T(move->z));
 	if (move->e != 0.0)
 		fprintf(f, " E%.5f", m->e + move->e);
@@ -2258,9 +2258,8 @@ static int write_gcode(const char *path, struct object *o)
 		f = fopen(path, "w");
 	if (!f)
 		return 1;
+	bool is_first_move = true;
 	struct machine m = {};
-	m.x = FL_T_TO_CINT(o->c.x - o->w / 2.0);
-	m.y = FL_T_TO_CINT(o->c.y - o->d / 2.0);
 	fl_t feed_rate_mult = config.first_layer_mult;
 	fprintf(stderr, "write gcode to %s...", path);
 	write_gcode_string(config.start_gcode, f);
@@ -2275,8 +2274,10 @@ static int write_gcode(const char *path, struct object *o)
 		average_layer_time /= config.layer_time_samples;
 		if (average_layer_time < config.min_layer_time)
 			feed_rate_mult = average_layer_time / config.min_layer_time;
-		for (struct g_move &move : o->slices[i].moves)
-			write_gcode_move(f, &move, &m, feed_rate_mult);
+		for (struct g_move &move : o->slices[i].moves) {
+			write_gcode_move(f, &move, &m, feed_rate_mult, is_first_move);
+			is_first_move = false;
+		}
 		feed_rate_mult = 1.0;
 	}
 	write_gcode_string(config.cool_off_gcode, f);
