@@ -1310,8 +1310,6 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 					sc.AddPaths(s_tmp, ClipperLib::ptSubject, true);
 			}
 		}
-		if (config.fill_threshold > 0.0)
-			remove_overlap(s_tmp, s_tmp, config.fill_threshold);
 		c.AddPaths(o->support_pattern, ClipperLib::ptSubject, false);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
@@ -1322,14 +1320,10 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		sc.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
 		sc.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		sc.Clear();
-		if (config.fill_threshold > 0.0)
-			remove_overlap(s_tmp, s_tmp, config.fill_threshold);
 		c.AddPaths(o->support_interface_pattern, ClipperLib::ptSubject, false);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-		ClipperLib::OpenPathsFromPolyTree(s, s_tmp);
-		c.Clear();
-		slice->support_lines.insert(slice->support_lines.end(), s_tmp.begin(), s_tmp.end());
+		ClipperLib::OpenPathsFromPolyTree(s, slice->support_interface_lines);
 	}
 	else {
 		c.AddPaths(o->support_pattern, ClipperLib::ptSubject, false);
