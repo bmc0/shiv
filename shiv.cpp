@@ -140,7 +140,6 @@ static struct {
 	bool outside_first         = false;    /* Prefer exterior shells */
 	bool solid_infill_first    = false;    /* Print solid infill before sparse infill */
 	bool separate_z_travel     = false;    /* Generate a separate z travel move instead of moving all axes together */
-	bool comb                  = false;    /* Avoid crossing boundaries */
 	bool combine_all           = false;    /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
 	bool generate_support      = false;    /* Generate support structure */
 	bool support_everywhere    = false;    /* False means only touching build plate */
@@ -201,7 +200,6 @@ struct island {
 	ClipperLib::Paths infill_insets;
 	ClipperLib::Paths solid_infill;
 	ClipperLib::Paths sparse_infill;
-	ClipperLib::Paths comb_boundaries;  /* simplified boundaries */
 	struct cint_rect box;  /* bounding box */
 };
 
@@ -472,9 +470,6 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "separate_z_travel") == 0) {
 		config.separate_z_travel = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "comb") == 0) {
-		config.comb = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "combine_all") == 0) {
 		config.combine_all = PARSE_BOOL(value);
@@ -980,10 +975,6 @@ static void generate_insets(struct slice *slice)
 		ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST * 4.0);
 
 		done:
-		if (config.comb) {
-			island.comb_boundaries = (config.shells > 0) ? island.insets[0] : island.infill_insets;
-			ClipperLib::CleanPolygons(island.comb_boundaries, (ClipperLib::cInt) MAXIMUM(config.extrusion_width * 0.25 * SCALE_CONSTANT, CLEAN_DIST * 4.0));
-		}
 		if (config.shells > 1 && config.fill_inset_gaps) {
 			ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 			ClipperLib::Paths hole;
@@ -1642,6 +1633,8 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 	}
 }
 
+#if 0
+/* This function is unused at the moment, but may be useful in the future */
 static fl_t get_partial_path_len(ClipperLib::Path &p, size_t start, size_t end, bool reverse)
 {
 	fl_t l = 0.0;
@@ -1659,88 +1652,7 @@ static fl_t get_partial_path_len(ClipperLib::Path &p, size_t start, size_t end, 
 	} while (i != end);
 	return l;
 }
-
-static void combed_travel_move(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t feed_rate)
-{
-	if (!config.comb || !island) {
-		linear_move(slice, island, m, x, y, z, 0.0, feed_rate, 1.0, false, true);
-		return;
-	}
-	ClipperLib::Paths boundaries = island->comb_boundaries;
-	fl_t end_x = CINT_TO_FL_T(x), end_y = CINT_TO_FL_T(y);
-	next_bound:
-	fl_t start_x = CINT_TO_FL_T(m->x), start_y = CINT_TO_FL_T(m->y);
-	ClipperLib::IntPoint p0(m->x, m->y), p1(x, y);
-	auto bound = boundaries.end();
-	size_t start_idx = 0;
-	fl_t best_dist = HUGE_VAL;
-	for (auto it = boundaries.begin(); it != boundaries.end(); ++it) {
-		if (get_boundary_crossing(*it, p0, p1) >= 0) {
-			ClipperLib::Path &p = *it;
-			/* Find boundary point closest to start point */
-			for (size_t i = 0; i < p.size(); ++i) {
-				fl_t x1 = CINT_TO_FL_T(p[i].X);
-				fl_t y1 = CINT_TO_FL_T(p[i].Y);
-				fl_t dist = (x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y);
-				if (dist < best_dist) {
-					bound = it;
-					start_idx = i;
-					best_dist = dist;
-				}
-			}
-		}
-	}
-	if (bound != boundaries.end()) {
-		ClipperLib::Path &p = *bound;
-		if (p.size() < 3) {
-			boundaries.erase(bound);
-			goto next_bound;
-		}
-		size_t end_idx = 0;
-		best_dist = HUGE_VAL;
-		/* Find boundary point closest to end point */
-		for (size_t i = 0; i < p.size(); ++i) {
-			fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
-			fl_t dist = sqrt((x1 - end_x) * (x1 - end_x) + (y1 - end_y) * (y1 - end_y));
-			if (dist < best_dist) {
-				end_idx = i;
-				best_dist = dist;
-			}
-		}
-		/* If start_idx and end_idx are the same, we can't do anything */
-		if (start_idx == end_idx) {
-			boundaries.erase(bound);
-			goto next_bound;
-		}
-		/* Find shortest direction */
-		bool reverse = false;
-		fl_t f_len = get_partial_path_len(p, start_idx, end_idx, false);
-		fl_t b_len = get_partial_path_len(p, start_idx, end_idx, true);
-		fl_t combed_len = f_len;
-		if (b_len < f_len) {
-			reverse = true;
-			combed_len = b_len;
-		}
-		fl_t x1 = CINT_TO_FL_T(p[start_idx].X), y1 = CINT_TO_FL_T(p[start_idx].Y);
-		combed_len += sqrt((x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y)); /* Add distance between initial location and the start of the combed path */
-		combed_len += best_dist; /* Add distance between the end of the combed path and the end location */
-		/* Append final moves */
-		if (combed_len > config.retract_threshold || (config.retract_within_island && combed_len > config.retract_min_travel))
-			m->new_island = true; /* This is kind of hacky, but linear_move() doesn't know about the total travel distance */
-		for (size_t i = start_idx; i != end_idx;) {
-			linear_move(slice, NULL, m, p[i].X, p[i].Y, z, 0.0, feed_rate, 1.0, false, true);
-			if (reverse)
-				i = (i < 1) ? p.size() - 1 : i - 1;
-			else
-				i = (i >= p.size() - 1) ? 0 : i + 1;
-		}
-		linear_move(slice, NULL, m, p[end_idx].X, p[end_idx].Y, z, 0.0, feed_rate, 1.0, false, true);
-		boundaries.erase(bound);
-		goto next_bound;
-	}
-	else
-		linear_move(slice, NULL, m, x, y, z, 0.0, feed_rate, 1.0, false, true);
-}
+#endif
 
 static bool path_len_is_greater_than(ClipperLib::Path &p, fl_t len)
 {
@@ -1838,7 +1750,7 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 	size_t k = start_idx;
 	do {
 		if (first_point) {
-			combed_travel_move(slice, island, m, p[k].X, p[k].Y, z, config.travel_feed_rate);
+			linear_move(slice, island, m, p[k].X, p[k].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true);
 			first_point = false;
 		}
 		else {
@@ -2078,11 +1990,11 @@ static void plan_infill(ClipperLib::Paths &paths, struct slice *slice, struct is
 		if (best != paths.end()) {
 			ClipperLib::Path &p = *best;
 			if (flip_points) {
-				combed_travel_move(slice, island, m, p[1].X, p[1].Y, z, config.travel_feed_rate);
+				linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true);
 				linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false);
 			}
 			else {
-				combed_travel_move(slice, island, m, p[0].X, p[0].Y, z, config.travel_feed_rate);
+				linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true);
 				linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false);
 			}
 			paths.erase(best);
@@ -2490,7 +2402,6 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  outside_first         = %s\n", (config.outside_first) ? "true" : "false");
 	fprintf(stderr, "  solid_infill_first    = %s\n", (config.solid_infill_first) ? "true" : "false");
 	fprintf(stderr, "  separate_z_travel     = %s\n", (config.separate_z_travel) ? "true" : "false");
-	fprintf(stderr, "  comb                  = %s\n", (config.comb) ? "true" : "false");
 	fprintf(stderr, "  combine_all           = %s\n", (config.combine_all) ? "true" : "false");
 	fprintf(stderr, "  generate_support      = %s\n", (config.generate_support) ? "true" : "false");
 	fprintf(stderr, "  support_everywhere    = %s\n", (config.support_everywhere) ? "true" : "false");
