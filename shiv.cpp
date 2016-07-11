@@ -1149,31 +1149,22 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
 		}
 		else if (!config.no_solid && (config.floor_layers > 0 || config.roof_layers > 0)) {
-			ClipperLib::Clipper sc;
-			
-			sc.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
+			c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
 			for (int i = -config.floor_layers; i <= config.roof_layers; ++i) {
 				if (i != 0) {
-					if (config.shells > 0) {
-						for (struct island &clip_island : o->slices[slice_index + i].islands)
-							if (BOUNDING_BOX_INTERSECTS(island.box, clip_island.box))
-								sc.AddPaths(clip_island.insets[config.shells - 1], ClipperLib::ptClip, true);
-					}
-					else {
-						for (struct island &clip_island : o->slices[slice_index + i].islands)
-							if (BOUNDING_BOX_INTERSECTS(island.box, clip_island.box))
-								sc.AddPaths(clip_island.infill_insets, ClipperLib::ptClip, true);
-					}
-					sc.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-					sc.Clear();
+					for (struct island &clip_island : o->slices[slice_index + i].islands)
+						if (BOUNDING_BOX_INTERSECTS(island.box, clip_island.box))
+							c.AddPaths(clip_island.infill_insets, ClipperLib::ptClip, true);
+					c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+					c.Clear();
 					if (i != config.roof_layers)
-						sc.AddPaths(s_tmp, ClipperLib::ptSubject, true);
+						c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
 				}
 			}
-			sc.AddPaths(s_tmp, ClipperLib::ptClip, true);
-			sc.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
-			sc.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-			sc.Clear();
+			c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
+			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+			c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+			c.Clear();
 			if (config.fill_threshold > 0.0)
 				remove_overlap(s_tmp, s_tmp, config.fill_threshold);
 			c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
@@ -1182,12 +1173,13 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				for (int i = 0; i < config.shells - 1; ++i)
 					c.AddPaths(island.inset_gaps[i], ClipperLib::ptClip, true);
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-			ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
 			c.Clear();
+			ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
 
-			sc.AddPaths(s_tmp, ClipperLib::ptClip, true);
-			sc.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
-			sc.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+			c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
+			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+			c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+			c.Clear();
 			if (config.fill_threshold > 0.0)
 				remove_overlap(s_tmp, s_tmp, config.fill_threshold);
 			c.AddPaths(o->sparse_infill_pattern, ClipperLib::ptSubject, false);
@@ -1298,28 +1290,27 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		ClipperLib::OpenPathsFromPolyTree(s, slice->support_interface_lines);
 	}
 	else if (config.interface_layers > 0) {
-		ClipperLib::Clipper sc;
 		ClipperLib::Paths s_tmp;
-		sc.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
+		c.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
 		for (int i = (slice_index > config.interface_layers) ? -config.interface_layers : -slice_index; slice_index + i < o->n_slices && i <= config.interface_layers; ++i) {
 			if (i != 0) {
-				sc.AddPaths(o->slices[slice_index + i].support_map, ClipperLib::ptClip, true);
-				sc.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-				sc.Clear();
+				c.AddPaths(o->slices[slice_index + i].support_map, ClipperLib::ptClip, true);
+				c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+				c.Clear();
 				if (i != config.interface_layers)
-					sc.AddPaths(s_tmp, ClipperLib::ptSubject, true);
+					c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
 			}
 		}
 		c.AddPaths(o->support_pattern, ClipperLib::ptSubject, false);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-		ClipperLib::OpenPathsFromPolyTree(s, slice->support_lines);
 		c.Clear();
+		ClipperLib::OpenPathsFromPolyTree(s, slice->support_lines);
 
-		sc.AddPaths(s_tmp, ClipperLib::ptClip, true);
-		sc.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
-		sc.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-		sc.Clear();
+		c.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
+		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		c.Clear();
 		c.AddPaths(o->support_interface_pattern, ClipperLib::ptSubject, false);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
