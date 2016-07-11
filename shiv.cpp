@@ -1136,11 +1136,12 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 	for (struct island &island : o->slices[slice_index].islands) {
 		ClipperLib::Clipper c;
 		ClipperLib::PolyTree s;
+		ClipperLib::Paths s_tmp;
 		if (config.infill_density == 1.0 || slice_index < config.floor_layers || slice_index + config.roof_layers >= o->n_slices) {
 			if (config.fill_threshold > 0.0)
-				remove_overlap(island.infill_insets, island.infill_insets, config.fill_threshold);
+				remove_overlap(island.infill_insets, s_tmp, config.fill_threshold);
 			c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
-			c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
+			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			if (config.fill_inset_gaps)
 				for (int i = 0; i < config.shells - 1; ++i)
 					c.AddPaths(island.inset_gaps[i], ClipperLib::ptClip, true);
@@ -1149,7 +1150,6 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 		}
 		else if (!config.no_solid && (config.floor_layers > 0 || config.roof_layers > 0)) {
 			ClipperLib::Clipper sc;
-			ClipperLib::Paths s_tmp;
 			
 			sc.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
 			for (int i = -config.floor_layers; i <= config.roof_layers; ++i) {
@@ -1197,9 +1197,9 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 		}
 		else {
 			if (config.fill_threshold > 0.0)
-				remove_overlap(island.infill_insets, island.infill_insets, config.fill_threshold);
+				remove_overlap(island.infill_insets, s_tmp, config.fill_threshold);
 			c.AddPaths(o->sparse_infill_pattern, ClipperLib::ptSubject, false);
-			c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
+			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
 
