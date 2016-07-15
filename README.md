@@ -88,7 +88,7 @@ Option                  | Default value | Description
 `retract_len`           |         `1.0` | Retraction length.
 `retract_speed`         |        `20.0` | Retraction speed.
 `restart_speed`         |        `-1.0` | Restart speed. -1 means same as `retract_speed`.
-`retract_min_travel`    |         `1.6` | Minimum travel for retraction when not crossing a boundary. Has no effect if `retract_within_island` is false.
+`retract_min_travel`    |         `1.6` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
 `retract_threshold`     |         `8.0` | Unconditional retraction threshold.
 `retract_within_island` |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
 `wipe_len`              |         `0.0` | Extra travel distance at the end of a shell.

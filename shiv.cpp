@@ -118,7 +118,7 @@ static struct {
 	fl_t retract_len           = 1.0;
 	fl_t retract_speed         = 20.0;
 	fl_t restart_speed         = -1.0;     /* -1 means same as retract_speed */
-	fl_t retract_min_travel    = 1.6;
+	fl_t retract_min_travel    = 1.6;      /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold     = 8.0;      /* Unconditional retraction threshold */
 	bool retract_within_island = false;
 	fl_t wipe_len              = 0.0;      /* Extra travel distance at the end of a shell */
@@ -1610,14 +1610,21 @@ static void append_g_move(struct slice *slice, struct g_move &move, fl_t len)
 	slice->moves.push_back(move);
 }
 
-static void linear_move(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel)
+static void linear_move(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel, bool doing_infill)
 {
 	fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
 	fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
 	struct g_move move = { x, y, z, 0.0, feed_rate, scalable, is_travel, false };
 	fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 	if (is_travel) {
-		if (!m->is_retracted && config.retract_len > 0.0 && (m->new_island || len > config.retract_threshold || (config.retract_within_island && len > config.retract_min_travel) || (island && crosses_boundary(m, island, x, y)) || (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(m, island, x, y)))) {
+		if (!m->is_retracted && config.retract_len > 0.0
+			&& (m->new_island
+				|| len > ((doing_infill) ? config.retract_threshold : config.retract_min_travel)
+				|| (config.retract_within_island && len > config.retract_min_travel)
+				|| (island && crosses_boundary(m, island, x, y))
+				|| (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(m, island, x, y))
+			)
+		) {
 			struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false, false };
 			append_g_move(slice, retract_move, config.retract_len);
 			m->is_retracted = true;
@@ -1726,11 +1733,11 @@ static void generate_wipe_path_moves(ClipperLib::Path &p, size_t start_idx, stru
 		l += norm;
 		if (l > config.wipe_len) {
 			fl_t new_x = x1 - (l - config.wipe_len) * (xv / norm), new_y = y1 - (l - config.wipe_len) * (yv / norm);
-			linear_move(slice, island, m, FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y), z, 0.0, feed_rate, 1.0, true, true);
+			linear_move(slice, island, m, FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y), z, 0.0, feed_rate, 1.0, true, true, false);
 			m->is_retracted = false;
 			break;
 		}
-		linear_move(slice, island, m, p[i].X, p[i].Y, z, 0.0, feed_rate, 1.0, true, true);
+		linear_move(slice, island, m, p[i].X, p[i].Y, z, 0.0, feed_rate, 1.0, true, true, false);
 		if (l == config.wipe_len) {
 			m->is_retracted = false;
 			break;
@@ -1761,7 +1768,7 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 	size_t k = start_idx;
 	do {
 		if (first_point) {
-			linear_move(slice, island, m, p[k].X, p[k].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true);
+			linear_move(slice, island, m, p[k].X, p[k].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false);
 			first_point = false;
 		}
 		else {
@@ -1770,7 +1777,7 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 				anchor_e_len = config.extrusion_width / 2.0 * config.extrusion_area * config.flow_multiplier / config.material_area;
 				did_anchor = true;
 			}
-			linear_move(slice, island, m, p[k].X, p[k].Y, z, anchor_e_len, feed_rate, 1.0, true, false);
+			linear_move(slice, island, m, p[k].X, p[k].Y, z, anchor_e_len, feed_rate, 1.0, true, false, false);
 		}
 		k = (k + 1 == p.size()) ? 0 : k + 1;
 	} while (k != start_idx);
@@ -1845,17 +1852,17 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 				bool connect = (!first && !crosses_boundary && best_dist < connect_threshold);
 				if (flip_points) {
 					if (connect)
-						linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false);
+						linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
 					else
-						linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true);
-					linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false);
+						linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
+					linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
 				}
 				else {
 					if (connect)
-						linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false);
+						linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
 					else
-						linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true);
-					linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false);
+						linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
+					linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
 				}
 				first = false;
 			}
@@ -2001,12 +2008,12 @@ static void plan_infill(ClipperLib::Paths &paths, struct slice *slice, struct is
 		if (best != paths.end()) {
 			ClipperLib::Path &p = *best;
 			if (flip_points) {
-				linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true);
-				linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false);
+				linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+				linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false, true);
 			}
 			else {
-				linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true);
-				linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false);
+				linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+				linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false, true);
 			}
 			paths.erase(best);
 		}
