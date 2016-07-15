@@ -200,6 +200,7 @@ struct island {
 	ClipperLib::Paths infill_insets;
 	ClipperLib::Paths solid_infill;
 	ClipperLib::Paths sparse_infill;
+	ClipperLib::Paths boundaries;
 	ClipperLib::Paths exposed_surface;
 	struct cint_rect box;  /* bounding box */
 };
@@ -976,6 +977,7 @@ static void generate_insets(struct slice *slice)
 		ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST * 4.0);
 
 		done:
+		do_offset((config.shells > 0) ? island.insets[0] : island.infill_insets, island.boundaries, config.extrusion_width / 8.0, 0.0);
 		if (config.shells > 1 && config.fill_inset_gaps) {
 			ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 			ClipperLib::Paths hole;
@@ -1585,7 +1587,7 @@ static bool crosses_boundary(struct machine *m, struct island *island, ClipperLi
 {
 	ClipperLib::IntPoint p0(m->x, m->y);
 	ClipperLib::IntPoint p1(x, y);
-	for (ClipperLib::Path &p : island->outlines) {
+	for (ClipperLib::Path &p : island->boundaries) {
 		if (get_boundary_crossing(p, p0, p1) >= 0)
 			return true;
 	}
