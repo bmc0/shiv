@@ -200,6 +200,7 @@ struct island {
 	ClipperLib::Paths infill_insets;
 	ClipperLib::Paths solid_infill;
 	ClipperLib::Paths sparse_infill;
+	ClipperLib::Paths exposed_surface;
 	struct cint_rect box;  /* bounding box */
 };
 
@@ -1137,6 +1138,20 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 		ClipperLib::Clipper c;
 		ClipperLib::PolyTree s;
 		ClipperLib::Paths s_tmp;
+		if (config.roof_layers > 0) {
+			if (slice_index + 1 == o->n_slices)
+				island.exposed_surface = island.infill_insets;
+			else {
+				c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
+				for (struct island &clip_island : o->slices[slice_index + 1].islands)
+					if (BOUNDING_BOX_INTERSECTS(island.box, clip_island.box))
+						c.AddPaths((config.shells > 0) ? clip_island.insets[0] : clip_island.infill_insets, ClipperLib::ptClip, true);
+				c.Execute(ClipperLib::ctDifference, island.exposed_surface, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+				c.Clear();
+			}
+			if (island.exposed_surface.size() > 0)
+				do_offset(island.exposed_surface, island.exposed_surface, config.extrusion_width / 4.0, 0.0);
+		}
 		if (config.infill_density == 1.0 || slice_index < config.floor_layers || slice_index + config.roof_layers >= o->n_slices) {
 			if (config.fill_threshold > 0.0)
 				remove_overlap(island.infill_insets, s_tmp, config.fill_threshold);
@@ -1577,6 +1592,17 @@ static bool crosses_boundary(struct machine *m, struct island *island, ClipperLi
 	return false;
 }
 
+static bool crosses_exposed_surface(struct machine *m, struct island *island, ClipperLib::cInt x, ClipperLib::cInt y)
+{
+	ClipperLib::IntPoint p0(m->x, m->y);
+	ClipperLib::IntPoint p1(x, y);
+	for (ClipperLib::Path &p : island->exposed_surface) {
+		if (get_boundary_crossing(p, p0, p1) >= 0)
+			return true;
+	}
+	return false;
+}
+
 static void append_g_move(struct slice *slice, struct g_move &move, fl_t len)
 {
 	/* FIXME: should probably take acceleration into account... */
@@ -1591,7 +1617,7 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 	struct g_move move = { x, y, z, 0.0, feed_rate, scalable, is_travel, false };
 	fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 	if (is_travel) {
-		if (!m->is_retracted && config.retract_len > 0.0 && (m->new_island || len > config.retract_threshold || (config.retract_within_island && len > config.retract_min_travel) || (island && crosses_boundary(m, island, x, y)))) {
+		if (!m->is_retracted && config.retract_len > 0.0 && (m->new_island || len > config.retract_threshold || (config.retract_within_island && len > config.retract_min_travel) || (island && crosses_boundary(m, island, x, y)) || (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(m, island, x, y)))) {
 			struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false, false };
 			append_g_move(slice, retract_move, config.retract_len);
 			m->is_retracted = true;
