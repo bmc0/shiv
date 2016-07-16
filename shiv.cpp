@@ -1152,7 +1152,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				c.Clear();
 			}
 			if (island.exposed_surface.size() > 0)
-				do_offset(island.exposed_surface, island.exposed_surface, config.extrusion_width / 4.0, 0.0);
+				do_offset(island.exposed_surface, island.exposed_surface, config.extrusion_width / -2.0, 0.0);
 		}
 		if (config.infill_density == 1.0 || slice_index < config.floor_layers || slice_index + config.roof_layers >= o->n_slices) {
 			if (config.fill_threshold > 0.0)
@@ -1600,6 +1600,8 @@ static bool crosses_exposed_surface(struct machine *m, struct island *island, Cl
 	ClipperLib::IntPoint p1(x, y);
 	for (ClipperLib::Path &p : island->exposed_surface) {
 		if (get_boundary_crossing(p, p0, p1) >= 0)
+			return true;
+		else if (ClipperLib::PointInPolygon(p0, p) || ClipperLib::PointInPolygon(p1, p))
 			return true;
 	}
 	return false;
