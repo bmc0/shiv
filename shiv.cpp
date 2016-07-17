@@ -34,7 +34,8 @@
 #define CLEAN_DIST                 (1.41421356 * config.coarseness)
 #define CLIPPER_MITER_LIMIT        2.0
 #define CLIPPER_ARC_TOLERANCE      10.0
-#define CLIPPER_JOIN_TYPE          ClipperLib::jtSquare
+#define CLIPPER_INSET_JOIN_TYPE    ClipperLib::jtSquare
+#define CLIPPER_OUTSET_JOIN_TYPE   ClipperLib::jtMiter
 #define USE_BOUNDING_BOX           1
 #define SHIV_DEBUG                 1
 typedef double fl_t;
@@ -929,22 +930,22 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 static void remove_overlap(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t ratio)
 {
 	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
-	co.AddPaths(src, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	co.AddPaths(src, CLIPPER_INSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 	co.Execute(dest, FL_T_TO_CINT(config.extrusion_width * ratio / -2.0));
 	co.Clear();
-	co.AddPaths(dest, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	co.AddPaths(dest, CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 	co.Execute(dest, FL_T_TO_CINT(config.extrusion_width * ratio / 2.0));
 }
 
 static void do_offset(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t dist, fl_t overlap_removal_ratio)
 {
 	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
-	co.AddPaths(src, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	co.AddPaths(src, (dist > 0.0) ? CLIPPER_OUTSET_JOIN_TYPE : CLIPPER_INSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 	if (overlap_removal_ratio > 0.0) {
 		fl_t extra = (dist > 0.0) ? (config.extrusion_width * overlap_removal_ratio / 2.0) : (config.extrusion_width * overlap_removal_ratio / -2.0);
 		co.Execute(dest, FL_T_TO_CINT(dist + extra));
 		co.Clear();
-		co.AddPaths(dest, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+		co.AddPaths(dest, (dist > 0.0) ? CLIPPER_INSET_JOIN_TYPE : CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 		co.Execute(dest, FL_T_TO_CINT(-extra));
 	}
 	else
@@ -985,14 +986,14 @@ static void generate_insets(struct slice *slice)
 			if (!island.inset_gaps)
 				die(e_nomem, 2);
 			for (int i = 0; i < config.shells - 1 && island.insets[i].size() > 0; ++i) {
-				co.AddPaths(island.insets[i], CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+				co.AddPaths(island.insets[i], CLIPPER_INSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 				hole = island.insets[i + 1];
 				ClipperLib::ReversePaths(hole);
-				co.AddPaths(hole, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+				co.AddPaths(hole, CLIPPER_INSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 				if (config.fill_threshold > 0.0) {
 					co.Execute(island.inset_gaps[i], FL_T_TO_CINT((config.extrusion_width + config.extrusion_width * config.fill_threshold) / -2.0));
 					co.Clear();
-					co.AddPaths(island.inset_gaps[i], CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+					co.AddPaths(island.inset_gaps[i], CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 					co.Execute(island.inset_gaps[i], FL_T_TO_CINT(config.extrusion_width * config.fill_threshold / 2.0));
 				}
 				else {
@@ -1232,7 +1233,7 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 	ClipperLib::Clipper c;
 	ClipperLib::Paths clip_paths;
 	for (struct island &island : o->slices[slice_index - 1].islands)
-		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 	co.Execute(clip_paths, FL_T_TO_CINT(tan(config.support_angle / 180.0 * M_PI) * config.layer_height));
 	co.Clear();
 	for (struct island &island : o->slices[slice_index].islands)
@@ -1240,7 +1241,7 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 	c.AddPaths(clip_paths, ClipperLib::ptClip, true);
 	c.Execute(ClipperLib::ctDifference, o->slices[slice_index].layer_support_map, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 	c.Clear();
-	co.AddPaths(o->slices[slice_index].layer_support_map, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	co.AddPaths(o->slices[slice_index].layer_support_map, CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 	co.Execute(o->slices[slice_index].layer_support_map, FL_T_TO_CINT(config.support_xy_expansion));
 }
 
@@ -1248,7 +1249,7 @@ static void generate_support_boundaries(struct slice *slice)
 {
 	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 	for (struct island &island : slice->islands)
-		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_JOIN_TYPE, ClipperLib::etClosedPolygon);
+		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
 	co.Execute(slice->support_boundaries, FL_T_TO_CINT((0.5 + config.support_margin) * config.edge_width - config.edge_offset));
 }
 
