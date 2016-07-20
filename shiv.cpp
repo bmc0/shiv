@@ -145,6 +145,7 @@ static struct {
 	bool generate_support      = false;    /* Generate support structure */
 	bool support_everywhere    = false;    /* False means only touching build plate */
 	bool solid_support_base    = false;    /* Make supports solid at layer 0 */
+	bool connect_support_lines = true;     /* Connect support lines together. Makes the support structure more robust, but harder to remove. */
 	enum ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	fl_t fill_threshold        = 0.2;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
 	fl_t support_angle         = 60.0;     /* Angle threshold for support */
@@ -485,6 +486,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "solid_support_base") == 0) {
 		config.solid_support_base = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "connect_support_lines") == 0) {
+		config.connect_support_lines = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "poly_fill_type") == 0) {
 		if (strcmp(value, "even_odd") == 0)
@@ -2042,8 +2046,8 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 		plan_brim(o, &m, m.z);
 	}
 	if (config.generate_support) {
-		plan_support(slice, slice->support_interface_lines, &m, m.z, layer_num, config.extrusion_width, config.extrusion_width * 1.9);
-		plan_support(slice, slice->support_lines, &m, m.z, layer_num, config.extrusion_width * 2.0, (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0);
+		plan_support(slice, slice->support_interface_lines, &m, m.z, layer_num, config.extrusion_width, (config.connect_support_lines) ? config.extrusion_width * 1.9 : 0.0);
+		plan_support(slice, slice->support_lines, &m, m.z, layer_num, config.extrusion_width * 2.0, (config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0 : 0.0);
 	}
 	while (slice->islands.size() > 0) {
 		auto best = slice->islands.begin();
@@ -2429,6 +2433,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  generate_support      = %s\n", (config.generate_support) ? "true" : "false");
 	fprintf(stderr, "  support_everywhere    = %s\n", (config.support_everywhere) ? "true" : "false");
 	fprintf(stderr, "  solid_support_base    = %s\n", (config.solid_support_base) ? "true" : "false");
+	fprintf(stderr, "  connect_support_lines = %s\n", (config.connect_support_lines) ? "true" : "false");
 	fprintf(stderr, "  poly_fill_type        = %s\n", get_poly_fill_type_string(config.poly_fill_type));
 	fprintf(stderr, "  fill_threshold        = %f\n", config.fill_threshold);
 	fprintf(stderr, "  support_angle         = %f\n", config.support_angle);

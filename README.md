@@ -114,6 +114,7 @@ Option                  | Default value | Description
 `generate_support`      |       `false` | Generate support structure.
 `support_everywhere`    |       `false` | False means only touching build plate.
 `solid_support_base`    |       `false` | Make supports solid at layer 0.
+`connect_support_lines` |        `true` | Connect support lines together. Makes the support structure more robust, but harder to remove.
 `poly_fill_type`        |    `non_zero` | Poly fill type for union. Sometimes `even_odd` is useful for broken models with self-intersections and/or incorrect normals.
 `fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
 `support_angle`         |        `60.0` | Angle threshold for support.
