@@ -1821,6 +1821,7 @@ static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 
 static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct machine *m, ClipperLib::cInt z, ssize_t layer_num, fl_t min_len, fl_t connect_threshold)
 {
+	ClipperLib::Path last_line(2);
 	bool first = true;
 	fl_t flow_adjust = (layer_num > 0) ? config.support_flow_mult : 1.0;
 	fl_t feed_rate = (layer_num > 0) ? config.infill_feed_rate : config.perimeter_feed_rate;
@@ -1851,7 +1852,7 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 				if (!first) {
 					ClipperLib::IntPoint p0(m->x, m->y);
 					for (ClipperLib::Path &bound : slice->support_boundaries) {
-						if (get_boundary_crossing(bound, p0, (flip_points) ? p[1] : p[0]) >= 0) {
+						if (get_boundary_crossing(bound, last_line[0], last_line[1]) >= 0 || get_boundary_crossing(bound, p0, (flip_points) ? p[1] : p[0]) >= 0) {
 							crosses_boundary = true;
 							m->new_island = true;  /* Force retract */
 							break;
@@ -1873,6 +1874,7 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 						linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
 					linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
 				}
+				last_line = p;
 				first = false;
 			}
 			lines.erase(best);
