@@ -78,6 +78,8 @@ Option                  | Default value | Description
 `shells`                |           `2` | Number of loops/perimeters/shells (whatever you want to call them).
 `roof_thickness`        |         `0.8` | Solid surface thickness when looking upwards.
 `floor_thickness`       |         `0.8` | Solid surface thickness when looking downwards.
+`min_shell_contact`     |         `1.0` | Minimum contact patch through roof and floor layers in units of `extrusion_width`. Small values (~0.1 to 1.0) will reduce print time compared to larger values, but may produce weaker parts.
+`solid_fill_expansion`  |         `1.0` | Distance to expand solid infill, in units of `extrusion_width`.
 `material_diameter`     |        `1.75` | Diameter of material.
 `flow_multiplier`       |         `1.0` | Flow rate adjustment to compensate for incorrect E-steps or E-step variation between material types.
 `perimeter_feed_rate`   |        `25.0` | Outer shell feed rate.
@@ -99,7 +101,7 @@ Option                  | Default value | Description
 `cool_off_gcode`        |        `M107` | G-code to turn off cooling.
 `temp`                  |       `220.0` | Hotend temperature.
 `bed_temp`              |        `65.0` | Bed temperature.
-`edge_overlap`          |         `0.5` | Allowable edge path overlap in units of extrusion_width.
+`edge_overlap`          |         `0.5` | Allowable edge path overlap in units of `extrusion_width`.
 `strict_shell_order`    |       `false` | Always do insets in order within an island.
 `infill_first`          |       `false` | Do infill before shells.
 `align_seams`           |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.

@@ -108,6 +108,9 @@ static struct {
 	int roof_layers;                       /* Calculated from roof_thickness */
 	fl_t floor_thickness       = 0.8;      /* Solid surface thickness when looking downwards */
 	int floor_layers;                      /* Calculated from floor_thickness */
+	fl_t min_shell_contact     = 1.0;      /* Minimum contact patch through roof and floor layers in units of extrusion_width. Small values (~0.1 to 1.0) will reduce print time compared to larger values, but may produce weaker parts. */
+	fl_t solid_infill_clip_offset;
+	fl_t solid_fill_expansion  = 1.0;      /* Distance to expand solid infill, in units of extrusion_width */
 	fl_t material_diameter     = 1.75;     /* Diameter of material */
 	fl_t material_area;                    /* Cross-sectional area of filament (calculated from material_diameter) */
 	fl_t flow_multiplier       = 1.0;      /* Flow rate adjustment */
@@ -203,6 +206,7 @@ struct island {
 	ClipperLib::Paths solid_infill;
 	ClipperLib::Paths sparse_infill;
 	ClipperLib::Paths boundaries;
+	ClipperLib::Paths solid_infill_clip;
 	ClipperLib::Paths exposed_surface;
 	struct cint_rect box;  /* bounding box */
 };
@@ -360,6 +364,14 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "floor_thickness") == 0) {
 		config.floor_thickness = atof(value);
 		CHECK_VALUE(config.floor_thickness >= 0.0, "floor thickness", ">= 0");
+	}
+	else if (strcmp(key, "min_shell_contact") == 0) {
+		config.min_shell_contact = atof(value);
+		CHECK_VALUE(config.min_shell_contact >= 0.0, "min_shell_contact", ">= 0");
+	}
+	else if (strcmp(key, "solid_fill_expansion") == 0) {
+		config.solid_fill_expansion = atof(value);
+		CHECK_VALUE(config.solid_fill_expansion >= 0.0, "solid fill expansion", ">= 0");
 	}
 	else if (strcmp(key, "material_diameter") == 0) {
 		config.material_diameter = atof(value);
@@ -983,6 +995,10 @@ static void generate_insets(struct slice *slice)
 
 		done:
 		do_offset((config.shells > 0) ? island.insets[0] : island.infill_insets, island.boundaries, config.extrusion_width / 8.0, 0.0);
+		if (config.solid_infill_clip_offset > 0.0)
+			do_offset(island.infill_insets, island.solid_infill_clip, config.solid_infill_clip_offset, 0.0);
+		else
+			island.solid_infill_clip = island.infill_insets;
 		if (config.shells > 1 && config.fill_inset_gaps) {
 			ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
 			ClipperLib::Paths hole;
@@ -1176,7 +1192,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				if (i != 0) {
 					for (struct island &clip_island : o->slices[slice_index + i].islands)
 						if (BOUNDING_BOX_INTERSECTS(island.box, clip_island.box))
-							c.AddPaths(clip_island.infill_insets, ClipperLib::ptClip, true);
+							c.AddPaths(clip_island.solid_infill_clip, ClipperLib::ptClip, true);
 					c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 					c.Clear();
 					if (i != config.roof_layers)
@@ -1189,6 +1205,13 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			c.Clear();
 			if (config.fill_threshold > 0.0)
 				remove_overlap(s_tmp, s_tmp, config.fill_threshold);
+			if (config.solid_fill_expansion > 0.0 || config.solid_infill_clip_offset > 0.0) {
+				do_offset(s_tmp, s_tmp, config.solid_infill_clip_offset + config.solid_fill_expansion * config.extrusion_width, 0.0);
+				c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
+				c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
+				c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+				c.Clear();
+			}
 			c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
 			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			if (config.fill_inset_gaps)
@@ -2377,6 +2400,8 @@ int main(int argc, char *argv[])
 	config.x_center += x_translate;
 	config.y_center += y_translate;
 	config.brim_lines = lround(config.brim_width / config.extrusion_width);
+	config.solid_infill_clip_offset = (0.5 + config.shells - config.fill_threshold - config.min_shell_contact) * config.extrusion_width;
+	config.solid_infill_clip_offset = MAXIMUM(config.solid_infill_clip_offset, 0.0);
 
 	fprintf(stderr, "configuration:\n");
 	fprintf(stderr, "  layer_height          = %f\n", config.layer_height);
@@ -2402,6 +2427,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, " *roof_layers           = %d\n", config.roof_layers);
 	fprintf(stderr, "  floor_thickness       = %f\n", config.floor_thickness);
 	fprintf(stderr, " *floor_layers          = %d\n", config.floor_layers);
+	fprintf(stderr, "  min_shell_contact     = %f\n", config.min_shell_contact);
 	fprintf(stderr, "  material_diameter     = %f\n", config.material_diameter);
 	fprintf(stderr, " *material_area         = %f\n", config.material_area);
 	fprintf(stderr, "  flow_multiplier       = %f\n", config.flow_multiplier);
