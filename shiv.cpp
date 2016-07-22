@@ -32,10 +32,6 @@
 
 #define SCALE_CONSTANT             1000  /* Clipper uses integers, so we need to scale floating point values. Precision is 1 / SCALE_CONSTANT units. */
 #define CLEAN_DIST                 (1.41421356 * config.coarseness)
-#define CLIPPER_MITER_LIMIT        2.0
-#define CLIPPER_ARC_TOLERANCE      10.0
-#define CLIPPER_INSET_JOIN_TYPE    ClipperLib::jtSquare
-#define CLIPPER_OUTSET_JOIN_TYPE   ClipperLib::jtMiter
 #define USE_BOUNDING_BOX           1
 #define SHIV_DEBUG                 1
 typedef double fl_t;
@@ -149,7 +145,11 @@ static struct {
 	bool support_everywhere    = false;    /* False means only touching build plate */
 	bool solid_support_base    = false;    /* Make supports solid at layer 0 */
 	bool connect_support_lines = true;     /* Connect support lines together. Makes the support structure more robust, but harder to remove. */
-	enum ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
+	ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
+	ClipperLib::JoinType inset_join_type    = ClipperLib::jtSquare;    /* Join type for negative offsets */
+	ClipperLib::JoinType outset_join_type   = ClipperLib::jtMiter;     /* Join type for positive offsets */
+	fl_t offset_miter_limit    = 5.0;
+	fl_t offset_arc_tolerance  = 5.0;
 	fl_t fill_threshold        = 0.2;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
 	fl_t support_angle         = 60.0;     /* Angle threshold for support */
 	fl_t support_margin        = 0.6;      /* Horizontal spacing between support and model, in units of edge_width */
@@ -295,6 +295,19 @@ static char * get_file_contents(const char *path)
 	} \
 
 #define PARSE_BOOL(value) (value[0] == 't' || value[0] == 'T' || value[0] == 'y' || value[0] == 'Y' || atoi(value))
+
+static int parse_join_type(const char *s, ClipperLib::JoinType *jt)
+{
+	if (strcmp(s, "miter") == 0)
+		*jt = ClipperLib::jtMiter;
+	else if (strcmp(s, "square") == 0)
+		*jt = ClipperLib::jtSquare;
+	else if (strcmp(s, "round") == 0)
+		*jt = ClipperLib::jtRound;
+	else
+		return 1;
+	return 0;
+}
 
 static int set_config_option(const char *key, const char *value, int n, const char *path)
 {
@@ -511,6 +524,22 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 			config.poly_fill_type = ClipperLib::pftPositive;
 		else if (strcmp(value, "negative") == 0)
 			config.poly_fill_type = ClipperLib::pftNegative;
+	}
+	else if (strcmp(key, "inset_join_type") == 0) {
+		if (parse_join_type(value, &config.inset_join_type))
+			fprintf(stderr, "error: illegal value for inset_join_type: %s", value);
+	}
+	else if (strcmp(key, "outset_join_type") == 0) {
+		if (parse_join_type(value, &config.outset_join_type))
+			fprintf(stderr, "error: illegal value for outset_join_type: %s", value);
+	}
+	else if (strcmp(key, "offset_miter_limit") == 0) {
+		config.offset_miter_limit = atof(value);
+		CHECK_VALUE(config.offset_miter_limit >= 2.0, "offset miter limit", ">= 2");
+	}
+	else if (strcmp(key, "offset_arc_tolerance") == 0) {
+		config.offset_arc_tolerance = atof(value);
+		CHECK_VALUE(config.offset_arc_tolerance >= 0.25, "offset arc tolerance", ">= 0.25");
 	}
 	else if (strcmp(key, "fill_threshold") == 0) {
 		config.fill_threshold = atof(value);
@@ -945,23 +974,23 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 
 static void remove_overlap(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t ratio)
 {
-	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
-	co.AddPaths(src, CLIPPER_INSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
+	co.AddPaths(src, config.inset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(dest, FL_T_TO_CINT(config.extrusion_width * ratio / -2.0));
 	co.Clear();
-	co.AddPaths(dest, CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	co.AddPaths(dest, config.outset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(dest, FL_T_TO_CINT(config.extrusion_width * ratio / 2.0));
 }
 
 static void do_offset(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t dist, fl_t overlap_removal_ratio)
 {
-	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
-	co.AddPaths(src, (dist > 0.0) ? CLIPPER_OUTSET_JOIN_TYPE : CLIPPER_INSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
+	co.AddPaths(src, (dist > 0.0) ? config.outset_join_type : config.inset_join_type, ClipperLib::etClosedPolygon);
 	if (overlap_removal_ratio > 0.0) {
 		fl_t extra = (dist > 0.0) ? (config.extrusion_width * overlap_removal_ratio / 2.0) : (config.extrusion_width * overlap_removal_ratio / -2.0);
 		co.Execute(dest, FL_T_TO_CINT(dist + extra));
 		co.Clear();
-		co.AddPaths(dest, (dist > 0.0) ? CLIPPER_INSET_JOIN_TYPE : CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+		co.AddPaths(dest, (dist > 0.0) ? config.inset_join_type : config.outset_join_type, ClipperLib::etClosedPolygon);
 		co.Execute(dest, FL_T_TO_CINT(-extra));
 	}
 	else
@@ -1002,20 +1031,20 @@ static void generate_insets(struct slice *slice)
 		else
 			island.solid_infill_clip = island.infill_insets;
 		if (config.shells > 1 && config.fill_inset_gaps) {
-			ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
+			ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
 			ClipperLib::Paths hole;
 			island.inset_gaps = (ClipperLib::Paths *) calloc(config.shells - 1, sizeof(ClipperLib::Paths));
 			if (!island.inset_gaps)
 				die(e_nomem, 2);
 			for (int i = 0; i < config.shells - 1 && island.insets[i].size() > 0; ++i) {
-				co.AddPaths(island.insets[i], CLIPPER_INSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+				co.AddPaths(island.insets[i], config.inset_join_type, ClipperLib::etClosedPolygon);
 				hole = island.insets[i + 1];
 				ClipperLib::ReversePaths(hole);
-				co.AddPaths(hole, CLIPPER_INSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+				co.AddPaths(hole, config.inset_join_type, ClipperLib::etClosedPolygon);
 				if (config.fill_threshold > 0.0) {
 					co.Execute(island.inset_gaps[i], FL_T_TO_CINT((config.extrusion_width + config.extrusion_width * config.fill_threshold) / -2.0));
 					co.Clear();
-					co.AddPaths(island.inset_gaps[i], CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+					co.AddPaths(island.inset_gaps[i], config.outset_join_type, ClipperLib::etClosedPolygon);
 					co.Execute(island.inset_gaps[i], FL_T_TO_CINT(config.extrusion_width * config.fill_threshold / 2.0));
 				}
 				else {
@@ -1258,11 +1287,11 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 {
 	if (slice_index < config.support_vert_margin + 1)
 		return;
-	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
+	ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
 	ClipperLib::Clipper c;
 	ClipperLib::Paths clip_paths;
 	for (struct island &island : o->slices[slice_index - 1].islands)
-		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, config.outset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(clip_paths, FL_T_TO_CINT(tan(config.support_angle / 180.0 * M_PI) * config.layer_height));
 	co.Clear();
 	for (struct island &island : o->slices[slice_index].islands)
@@ -1270,15 +1299,15 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 	c.AddPaths(clip_paths, ClipperLib::ptClip, true);
 	c.Execute(ClipperLib::ctDifference, o->slices[slice_index].layer_support_map, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 	c.Clear();
-	co.AddPaths(o->slices[slice_index].layer_support_map, CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+	co.AddPaths(o->slices[slice_index].layer_support_map, config.outset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(o->slices[slice_index].layer_support_map, FL_T_TO_CINT(config.support_xy_expansion));
 }
 
 static void generate_support_boundaries(struct slice *slice)
 {
-	ClipperLib::ClipperOffset co(CLIPPER_MITER_LIMIT, CLIPPER_ARC_TOLERANCE);
+	ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
 	for (struct island &island : slice->islands)
-		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, CLIPPER_OUTSET_JOIN_TYPE, ClipperLib::etClosedPolygon);
+		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, config.outset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(slice->support_boundaries, FL_T_TO_CINT((0.5 + config.support_margin) * config.edge_width - config.edge_offset));
 }
 
@@ -2278,6 +2307,16 @@ static const char * get_poly_fill_type_string(ClipperLib::PolyFillType pft)
 	return NULL;
 }
 
+static const char * get_join_type_string(ClipperLib::JoinType jt)
+{
+	switch (jt) {
+	case ClipperLib::jtMiter:  return "miter";
+	case ClipperLib::jtSquare: return "square";
+	case ClipperLib::jtRound:  return "round";
+	}
+	return NULL;
+}
+
 int main(int argc, char *argv[])
 {
 	int opt;
@@ -2465,6 +2504,10 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  solid_support_base    = %s\n", (config.solid_support_base) ? "true" : "false");
 	fprintf(stderr, "  connect_support_lines = %s\n", (config.connect_support_lines) ? "true" : "false");
 	fprintf(stderr, "  poly_fill_type        = %s\n", get_poly_fill_type_string(config.poly_fill_type));
+	fprintf(stderr, "  inset_join_type       = %s\n", get_join_type_string(config.inset_join_type));
+	fprintf(stderr, "  outset_join_type      = %s\n", get_join_type_string(config.outset_join_type));
+	fprintf(stderr, "  offset_miter_limit    = %f\n", config.offset_miter_limit);
+	fprintf(stderr, "  offset_arc_tolerance  = %f\n", config.offset_arc_tolerance);
 	fprintf(stderr, "  fill_threshold        = %f\n", config.fill_threshold);
 	fprintf(stderr, "  support_angle         = %f\n", config.support_angle);
 	fprintf(stderr, "  support_margin        = %f\n", config.support_margin);

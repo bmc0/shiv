@@ -118,6 +118,10 @@ Option                  | Default value | Description
 `solid_support_base`    |       `false` | Make supports solid at layer 0.
 `connect_support_lines` |        `true` | Connect support lines together. Makes the support structure more robust, but harder to remove.
 `poly_fill_type`        |    `non_zero` | Poly fill type for union. Sometimes `even_odd` is useful for broken models with self-intersections and/or incorrect normals.
+`inset_join_type`       |      `square` | Join type for negative offsets. Legal values are `miter`, `square`, and `round`. `square` tends to retain tiny details better, but `miter` produces simpler (smaller) gcode.
+`outset_join_type`      |       `miter` | Join type for positive offsets. Legal values are `miter`, `square`, and `round`. Probably best left on `miter`.
+`offset_miter_limit`    |         `5.0` | Sets `ClipperOffset.MiterLimit`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/MiterLimit.htm) for details.
+`offset_arc_tolerance`  |         `5.0` | Sets `ClipperOffset.ArcTolerance`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/ArcTolerance.htm) for details.
 `fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
 `support_angle`         |        `60.0` | Angle threshold for support.
 `support_margin`        |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
