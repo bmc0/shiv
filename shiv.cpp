@@ -975,17 +975,19 @@ static void generate_insets(struct slice *slice)
 		if (!island.insets)
 			die(e_nomem, 2);
 		if (config.shells > 0) {
-			do_offset(island.outlines, island.insets[0], config.edge_offset + config.extra_offset, 1.0 - config.edge_overlap);
+			fl_t offset = config.edge_offset + config.extra_offset;
+			do_offset(island.outlines, island.insets[0], offset, 1.0 - config.edge_overlap);
 			if (config.clean_insets)
 				ClipperLib::CleanPolygons(island.insets[0], CLEAN_DIST);
 			for (int i = 1; i < config.shells; ++i) {
-				do_offset(island.insets[i - 1], island.insets[i], -config.extrusion_width, 1.0);
+				offset -= config.extrusion_width;
+				do_offset(island.outlines, island.insets[i], offset, 1.0);
 				if (config.clean_insets)
 					ClipperLib::CleanPolygons(island.insets[i], CLEAN_DIST);
 				if (island.insets[i].size() == 0)  /* break if nothing is being generated */
 					goto done;
 			}
-			do_offset(island.insets[config.shells - 1], island.infill_insets, -config.extrusion_width / 2.0, 0.0);
+			do_offset(island.outlines, island.infill_insets, offset - config.extrusion_width / 2.0, 0.0);
 		}
 		else {
 			/* The offset distance here is not *technically* correct, but I'm not sure one can expect high dimensional accuracy when only printing infill anyway... */
