@@ -1695,7 +1695,7 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 		m->new_island = false;
 	}
 	else {
-		if (m->is_retracted) {
+		if (m->is_retracted && config.retract_len > 0.0) {
 			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false, false, true };
 			append_g_move(slice, restart_move, config.retract_len);
 			m->is_retracted = false;
