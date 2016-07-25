@@ -87,13 +87,13 @@ Option                  | Default value | Description
 `infill_feed_rate`      |        `50.0` | Infill feed rate.
 `travel_feed_rate`      |       `120.0` | Travel feed rate.
 `first_layer_mult`      |         `0.5` | First layer feed rates (except travel) are multiplied by this value.
+`coast_len`             |         `0.0` | Length to coast (move with the extruder turned off) at the end of a shell. This can reduce start/end blobs if set correctly, but will cause gaps if set too high.
 `retract_len`           |         `1.0` | Retraction length.
 `retract_speed`         |        `20.0` | Retraction speed.
 `restart_speed`         |        `-1.0` | Restart speed. -1 means same as `retract_speed`.
 `retract_min_travel`    |         `1.6` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
 `retract_threshold`     |         `8.0` | Unconditional retraction threshold.
 `retract_within_island` |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
-`wipe_len`              |         `0.0` | Extra travel distance at the end of a shell.
 `cool_layer`            |           `1` | Turn on part cooling at this layer (numbered from zero). Set to a negative number to disable cooling.
 `start_gcode`           |        `NULL` | Prepend this G-code to beginning of the output file.
 `end_gcode`             |        `NULL` | Append this G-code to the end of the output file.
@@ -108,7 +108,6 @@ Option                  | Default value | Description
 `clean_insets`          |        `true` | Do `ClipperLib::CleanPolygon()` on all insets (only the initial outline is cleaned if this is false).
 `fill_inset_gaps`       |        `true` | Fill gaps between shells.
 `no_solid`              |       `false` | If true, only generate solid fill on the very top and bottom of the model.
-`anchor`                |        `true` | Clip and anchor inset paths.
 `outside_first`         |       `false` | Prefer exterior shells.
 `solid_infill_first`    |       `false` | Print solid infill before sparse infill.
 `separate_z_travel`     |       `false` | Generate a separate z travel move instead of moving all axes together.

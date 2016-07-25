@@ -115,13 +115,13 @@ static struct {
 	fl_t infill_feed_rate      = 50.0;
 	fl_t travel_feed_rate      = 120.0;
 	fl_t first_layer_mult      = 0.5;      /* First layer feed rates (except travel) are multiplied by this value */
+	fl_t coast_len             = 0.0;      /* Length to coast (move with the extruder turned off) at the end of a shell */
 	fl_t retract_len           = 1.0;
 	fl_t retract_speed         = 20.0;
 	fl_t restart_speed         = -1.0;     /* -1 means same as retract_speed */
 	fl_t retract_min_travel    = 1.6;      /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold     = 8.0;      /* Unconditional retraction threshold */
 	bool retract_within_island = false;
-	fl_t wipe_len              = 0.0;      /* Extra travel distance at the end of a shell */
 	int cool_layer             = 1;        /* Turn on part cooling at this layer */
 	char *start_gcode          = NULL;
 	char *end_gcode            = NULL;
@@ -136,7 +136,6 @@ static struct {
 	bool clean_insets          = true;     /* Do ClipperLib::CleanPolygon operation on all insets (only the initial outline is cleaned if this is false) */
 	bool fill_inset_gaps       = true;     /* Fill gaps between shells */
 	bool no_solid              = false;    /* If true, only generate solid fill on the very top and bottom of the model */
-	bool anchor                = true;     /* Clip and anchor inset paths */
 	bool outside_first         = false;    /* Prefer exterior shells */
 	bool solid_infill_first    = false;    /* Print solid infill before sparse infill */
 	bool separate_z_travel     = false;    /* Generate a separate z travel move instead of moving all axes together */
@@ -414,6 +413,10 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 		config.first_layer_mult = atof(value);
 		CHECK_VALUE(config.first_layer_mult > 0.0, "first layer multiplier", "> 0");
 	}
+	else if (strcmp(key, "coast_len") == 0) {
+		config.coast_len = atof(value);
+		CHECK_VALUE(config.coast_len >= 0.0, "coast length", ">= 0");
+	}
 	else if (strcmp(key, "retract_len") == 0) {
 		config.retract_len = atof(value);
 		CHECK_VALUE(config.retract_len >= 0.0, "retract length", ">= 0");
@@ -436,10 +439,6 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "retract_within_island") == 0) {
 		config.retract_within_island = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "wipe_len") == 0) {
-		config.wipe_len = atof(value);
-		CHECK_VALUE(config.wipe_len >= 0.0, "wipe length", ">= 0");
 	}
 	else if (strcmp(key, "cool_layer") == 0) {
 		config.cool_layer = atoi(value);
@@ -487,9 +486,6 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "no_solid") == 0) {
 		config.no_solid = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "anchor") == 0) {
-		config.anchor = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "outside_first") == 0) {
 		config.outside_first = PARSE_BOOL(value);
@@ -1754,15 +1750,16 @@ static bool path_len_is_greater_than(ClipperLib::Path &p, fl_t len)
 	return false;
 }
 
-/* Returns the new start index. Do not call this function on a path that has a total length of less than clip. */
-static size_t clip_path(ClipperLib::Path &p, size_t start_idx, fl_t clip)
+/* Requires the last point to be the actual end point. For a closed
+   path, the last point should be the same as the first point. */
+static void clip_path_from_end(ClipperLib::Path &p, ClipperLib::Path *clipped_points, fl_t clip)
 {
-	fl_t l = 0.0;
-	fl_t x0 = CINT_TO_FL_T(p[start_idx].X), y0 = CINT_TO_FL_T(p[start_idx].Y);
-	/* We want to leave the original start point alone because it becomes the end point */
-	start_idx = (start_idx + 1 == p.size()) ? 0 : start_idx + 1;
+	fl_t x0 = CINT_TO_FL_T((p.end() - 1)->X), y0 = CINT_TO_FL_T((p.end() - 1)->Y), l = 0.0;
 	for (;;) {
-		fl_t x1 = CINT_TO_FL_T(p[start_idx].X), y1 = CINT_TO_FL_T(p[start_idx].Y);
+		if (clipped_points)
+			clipped_points->push_back(*(p.end() - 1));
+		p.erase(p.end() - 1);
+		fl_t x1 = CINT_TO_FL_T((p.end() - 1)->X), y1 = CINT_TO_FL_T((p.end() - 1)->Y);
 		fl_t xv = x1 - x0, yv = y1 - y0;
 		fl_t norm = sqrt(xv * xv + yv * yv);
 		l += norm;
@@ -1770,82 +1767,43 @@ static size_t clip_path(ClipperLib::Path &p, size_t start_idx, fl_t clip)
 			break;
 		else if (l > clip) {
 			fl_t new_x = x1 - (l - clip) * (xv / norm), new_y = y1 - (l - clip) * (yv / norm);
-			p.insert(p.begin() + start_idx, FL_T_TO_INTPOINT(new_x, new_y));
+			p.push_back(FL_T_TO_INTPOINT(new_x, new_y));
 			break;
 		}
 		x0 = x1;
 		y0 = y1;
-		p.erase(p.begin() + start_idx);
-		if (start_idx == p.size())
-			start_idx = 0;
 	}
-	return start_idx;
+	if (clipped_points)
+		std::reverse(clipped_points->begin(), clipped_points->end());
 }
 
-static void generate_wipe_path_moves(ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
-{
-	fl_t l = 0.0;
-	start_idx = (start_idx == 0) ? p.size() - 1 : start_idx - 1;  /* We want to start at the *end* of the loop */
-	fl_t x0 = CINT_TO_FL_T(p[start_idx].X), y0 = CINT_TO_FL_T(p[start_idx].Y);
-	size_t i = (start_idx + 1 == p.size()) ? 0 : start_idx + 1;
-	m->is_retracted = true;  /* Make sure we don't retract */
-	for (;;) {
-		fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
-		fl_t xv = x1 - x0, yv = y1 - y0;
-		fl_t norm = sqrt(xv * xv + yv * yv);
-		l += norm;
-		if (l > config.wipe_len) {
-			fl_t new_x = x1 - (l - config.wipe_len) * (xv / norm), new_y = y1 - (l - config.wipe_len) * (yv / norm);
-			linear_move(slice, island, m, FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y), z, 0.0, feed_rate, 1.0, true, true, false);
-			m->is_retracted = false;
-			break;
-		}
-		linear_move(slice, island, m, p[i].X, p[i].Y, z, 0.0, feed_rate, 1.0, true, true, false);
-		if (l == config.wipe_len) {
-			m->is_retracted = false;
-			break;
-		}
-		x0 = x1;
-		y0 = y1;
-		i = (i + 1 == p.size()) ? 0 : i + 1;
-	}
-}
-
-static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, fl_t feed_rate, bool no_wipe)
+static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
 {
 	if (p.size() < 3)
 		return;
 	bool first_point = true;
-	bool do_anchor = false, did_anchor = false;
-	fl_t total_clip = 0.0;
-	if (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * 4.0))
-		total_clip += config.shell_clip;
-	if (config.anchor && path_len_is_greater_than(p, total_clip * 4.0 + config.extrusion_width * 2.0)) {
-		do_anchor = true;
-		total_clip += config.extrusion_width / 2.0;
-	}
-	if (total_clip > 0.0)
-		start_idx = clip_path(p, start_idx, total_clip);
-	else
-		p.push_back(p[0]);  /* So the loop works the same for both clipped and non-clipped paths */
-	size_t k = start_idx;
-	do {
+	bool do_clip = (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * 4.0));
+	bool do_coast = (config.coast_len > 0.0 && path_len_is_greater_than(p, config.coast_len * 2.0 + ((do_clip) ? config.shell_clip : 0.0)));
+	if (start_idx != 0)
+		std::rotate(p.begin(), p.begin() + start_idx, p.end());
+	p.push_back(p[0]);
+	if (do_clip)
+		clip_path_from_end(p, NULL, config.shell_clip);
+	ClipperLib::Path coast_path;
+	if (do_coast)
+		clip_path_from_end(p, &coast_path, config.coast_len);
+	for (ClipperLib::IntPoint &point : p) {
 		if (first_point) {
-			linear_move(slice, island, m, p[k].X, p[k].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false);
+			linear_move(slice, island, m, point.X, point.Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false);
 			first_point = false;
 		}
-		else {
-			fl_t anchor_e_len = 0.0;
-			if (do_anchor && !did_anchor) {
-				anchor_e_len = config.extrusion_width / 2.0 * config.extrusion_area * config.flow_multiplier / config.material_area;
-				did_anchor = true;
-			}
-			linear_move(slice, island, m, p[k].X, p[k].Y, z, anchor_e_len, feed_rate, 1.0, true, false, false);
-		}
-		k = (k + 1 == p.size()) ? 0 : k + 1;
-	} while (k != start_idx);
-	if (!no_wipe && config.wipe_len > 0.0)
-		generate_wipe_path_moves(p, start_idx, slice, island, m, z, feed_rate);
+		else
+			linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, false, false);
+	}
+	m->is_retracted = true;  /* Make sure we don't retract */
+	for (ClipperLib::IntPoint &point : coast_path)
+		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true ,false);
+	m->is_retracted = false;
 }
 
 static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
@@ -1867,7 +1825,7 @@ static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 			}
 		}
 		if (best != o->brim.end()) {
-			generate_closed_path_moves(*best, start_idx, &o->slices[0], NULL, m, z, config.perimeter_feed_rate, false);
+			generate_closed_path_moves(*best, start_idx, &o->slices[0], NULL, m, z, config.perimeter_feed_rate);
 			o->brim.erase(best);
 		}
 	}
@@ -1993,7 +1951,7 @@ static void plan_insets_weighted(struct slice *slice, struct island *island, str
 				}
 			}
 			if (inset_num != -1) {
-				generate_closed_path_moves(*best, start_idx, slice, island, m, z, (inset_num == 0) ? config.perimeter_feed_rate : config.loop_feed_rate, false);
+				generate_closed_path_moves(*best, start_idx, slice, island, m, z, (inset_num == 0) ? config.perimeter_feed_rate : config.loop_feed_rate);
 				island->insets[inset_num].erase(best);
 			}
 		} while (inset_num != -1);
@@ -2037,7 +1995,7 @@ static void plan_insets_strict_order(struct slice *slice, struct island *island,
 					}
 				}
 			}
-			generate_closed_path_moves(*best, start_idx, slice, island, m, z, (i == 0) ? config.perimeter_feed_rate : config.loop_feed_rate, false);
+			generate_closed_path_moves(*best, start_idx, slice, island, m, z, (i == 0) ? config.perimeter_feed_rate : config.loop_feed_rate);
 			island->insets[i].erase(best);
 		}
 	}
@@ -2477,13 +2435,13 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  infill_feed_rate      = %f\n", config.infill_feed_rate);
 	fprintf(stderr, "  travel_feed_rate      = %f\n", config.travel_feed_rate);
 	fprintf(stderr, "  first_layer_mult      = %f\n", config.first_layer_mult);
+	fprintf(stderr, "  coast_len             = %f\n", config.coast_len);
 	fprintf(stderr, "  retract_len           = %f\n", config.retract_len);
 	fprintf(stderr, "  retract_speed         = %f\n", config.retract_speed);
 	fprintf(stderr, "  restart_speed         = %f\n", config.restart_speed);
 	fprintf(stderr, "  retract_min_travel    = %f\n", config.retract_min_travel);
 	fprintf(stderr, "  retract_threshold     = %f\n", config.retract_threshold);
 	fprintf(stderr, "  retract_within_island = %s\n", (config.retract_within_island) ? "true" : "false");
-	fprintf(stderr, "  wipe_len              = %f\n", config.wipe_len);
 	fprintf(stderr, "  cool_layer            = %d\n", config.cool_layer);
 	fprintf(stderr, "  temp                  = %f\n", config.temp);
 	fprintf(stderr, "  bed_temp              = %f\n", config.bed_temp);
@@ -2494,7 +2452,6 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  clean_insets          = %s\n", (config.clean_insets) ? "true" : "false");
 	fprintf(stderr, "  fill_inset_gaps       = %s\n", (config.fill_inset_gaps) ? "true" : "false");
 	fprintf(stderr, "  no_solid              = %s\n", (config.no_solid) ? "true" : "false");
-	fprintf(stderr, "  anchor                = %s\n", (config.anchor) ? "true" : "false");
 	fprintf(stderr, "  outside_first         = %s\n", (config.outside_first) ? "true" : "false");
 	fprintf(stderr, "  solid_infill_first    = %s\n", (config.solid_infill_first) ? "true" : "false");
 	fprintf(stderr, "  separate_z_travel     = %s\n", (config.separate_z_travel) ? "true" : "false");
