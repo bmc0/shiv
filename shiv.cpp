@@ -2401,7 +2401,7 @@ int main(int argc, char *argv[])
 	config.extrusion_area = config.extrusion_width * config.layer_height * config.packing_density;
 	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI / 4.0)) / config.layer_height + config.layer_height;
 	config.edge_offset = config.edge_width / -2.0 - (config.extrusion_area * (1.0 - config.edge_packing_density)) / config.layer_height;
-	config.shell_clip = (config.extrusion_width * config.packing_density) * (config.extrusion_width * config.packing_density) * M_PI / 4.0 * (1.0 - config.seam_packing_density) / (config.extrusion_width * config.packing_density);
+	config.shell_clip = (config.extrusion_width * config.packing_density) * M_PI / 4.0 * (1.0 - config.seam_packing_density);
 	config.material_area = M_PI * config.material_diameter * config.material_diameter / 4.0;
 	if (config.restart_speed == -1.0)
 		config.restart_speed = config.retract_speed;
