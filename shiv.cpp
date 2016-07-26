@@ -165,6 +165,9 @@ static struct {
 	int brim_lines;
 	fl_t material_density      = 0.00125;  /* Material density in <arbitrary mass unit> / <input/output unit>^3. The default is correct for PLA and millimeter input/output units */
 	fl_t material_cost         = 0.01499;  /* Material cost in <arbitrary currency> / <arbitrary mass unit>. The arbitrary mass unit must be the same as used in material_density */
+
+	/* internal stuff */
+	fl_t xy_extra              = 0.0;      /* extra xy size (brim, extra_offset, support_xy_expansion, etc...) */
 } config;
 
 struct vertex {
@@ -1078,10 +1081,10 @@ static void generate_infill_patterns(struct object *o)
 {
 	ClipperLib::Path line(2);
 	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width * sqrt(2.0));
-	const ClipperLib::cInt min_x = FL_T_TO_CINT(-o->w / 2.0 + o->c.x);
-	const ClipperLib::cInt min_y = FL_T_TO_CINT(-o->d / 2.0 + o->c.y);
-	const ClipperLib::cInt max_x = FL_T_TO_CINT(o->w / 2.0 + o->c.x);
-	const ClipperLib::cInt max_y = FL_T_TO_CINT(o->d / 2.0 + o->c.y);
+	const ClipperLib::cInt min_x = FL_T_TO_CINT(o->c.x - (o->w + config.xy_extra) / 2.0);
+	const ClipperLib::cInt min_y = FL_T_TO_CINT(o->c.y - (o->d + config.xy_extra) / 2.0);
+	const ClipperLib::cInt max_x = FL_T_TO_CINT(o->c.x + (o->w + config.xy_extra) / 2.0);
+	const ClipperLib::cInt max_y = FL_T_TO_CINT(o->c.y + (o->d + config.xy_extra) / 2.0);
 
 	/* generate even solid fill */
 	line[0].X = min_x;
@@ -1517,8 +1520,8 @@ static void preview_slices(struct object *o)
 {
 	ssize_t i;
 	fprintf(stdout, "set size ratio -1\n");
-	fprintf(stdout, "set xrange [%e:%e]\n", o->c.x - o->w / 2.0 - (config.brim_lines * config.extrusion_width), o->c.x + o->w / 2.0 + (config.brim_lines * config.extrusion_width));
-	fprintf(stdout, "set yrange [%e:%e]\n", o->c.y - o->d / 2.0 - (config.brim_lines * config.extrusion_width), o->c.y + o->d / 2.0 + (config.brim_lines * config.extrusion_width));
+	fprintf(stdout, "set xrange [%e:%e]\n", o->c.x - (o->w + config.xy_extra) / 2.0, o->c.x + (o->w + config.xy_extra) / 2.0);
+	fprintf(stdout, "set yrange [%e:%e]\n", o->c.y - (o->d + config.xy_extra) / 2.0, o->c.y + (o->d + config.xy_extra) / 2.0);
 	for (i = 0; i < o->n_slices; ++i) {
 		fprintf(stderr, "layer %zd/%zd: intersections = %zd; islands = %zd\n", i + 1, o->n_slices, o->slices[i].n_seg, o->slices[i].islands.size());
 		fprintf(stdout, "set title 'Layer %zd/%zd'\n", i + 1, o->n_slices);
@@ -2063,19 +2066,12 @@ static void plan_infill(ClipperLib::Paths &paths, struct slice *slice, struct is
 static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 {
 	struct machine m = {};
-	m.x = FL_T_TO_CINT(o->c.x - o->w / 2.0);
-	m.y = FL_T_TO_CINT(o->c.y - o->d / 2.0);
+	m.x = FL_T_TO_CINT(o->c.x - (o->w + config.xy_extra) / 2.0);
+	m.y = FL_T_TO_CINT(o->c.y - (o->d + config.xy_extra) / 2.0);
 	m.z = FL_T_TO_CINT(((fl_t) layer_num) * config.layer_height + config.layer_height);
 	m.is_retracted = true;  /* NOTE: This will cause unconditional retraction on layer change */
-	if (config.generate_support) {
-		m.x -= FL_T_TO_CINT(config.support_xy_expansion);
-		m.y -= FL_T_TO_CINT(config.support_xy_expansion);
-	}
-	if (layer_num == 0 && config.brim_lines > 0) {
-		m.x -= FL_T_TO_CINT(config.brim_lines * config.extrusion_width);
-		m.y -= FL_T_TO_CINT(config.brim_lines * config.extrusion_width);
+	if (layer_num == 0 && config.brim_lines > 0)
 		plan_brim(o, &m, m.z);
-	}
 	if (config.generate_support) {
 		plan_support(slice, slice->support_interface_lines, &m, m.z, layer_num, config.extrusion_width, (config.connect_support_lines) ? config.extrusion_width * 1.9 : 0.0);
 		plan_support(slice, slice->support_lines, &m, m.z, layer_num, config.extrusion_width * 2.0, (config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0 : 0.0);
@@ -2418,6 +2414,9 @@ int main(int argc, char *argv[])
 	config.brim_lines = lround(config.brim_width / config.extrusion_width);
 	config.solid_infill_clip_offset = (0.5 + config.shells - config.fill_threshold - config.min_shell_contact) * config.extrusion_width;
 	config.solid_infill_clip_offset = MAXIMUM(config.solid_infill_clip_offset, 0.0);
+	config.xy_extra = (config.extra_offset + config.extrusion_width * config.brim_lines) * 2.0;
+	if (config.generate_support)
+		config.xy_extra += config.support_xy_expansion * 2.0;
 
 	fprintf(stderr, "configuration:\n");
 	fprintf(stderr, "  layer_height          = %f\n", config.layer_height);
