@@ -122,6 +122,7 @@ static struct {
 	fl_t retract_min_travel    = 1.6;      /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold     = 8.0;      /* Unconditional retraction threshold */
 	bool retract_within_island = false;
+	fl_t extra_restart_len     = 0.0;      /* Extra material length on restart */
 	int cool_layer             = 1;        /* Turn on part cooling at this layer */
 	char *start_gcode          = NULL;
 	char *end_gcode            = NULL;
@@ -439,6 +440,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "retract_within_island") == 0) {
 		config.retract_within_island = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "extra_restart_len") == 0) {
+		config.extra_restart_len = atof(value);
 	}
 	else if (strcmp(key, "cool_layer") == 0) {
 		config.cool_layer = atoi(value);
@@ -1693,7 +1697,11 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 	else {
 		if (m->is_retracted && config.retract_len > 0.0) {
 			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false, false, true };
-			append_g_move(slice, restart_move, config.retract_len);
+			if (config.extra_restart_len < 0.0)
+				restart_move.e += config.extra_restart_len;
+			else
+				extra_e_len += config.extra_restart_len;
+			append_g_move(slice, restart_move, restart_move.e);
 			m->is_retracted = false;
 		}
 		move.e = len * config.extrusion_area * config.flow_multiplier * flow_adjust / config.material_area;
@@ -2442,6 +2450,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  retract_min_travel    = %f\n", config.retract_min_travel);
 	fprintf(stderr, "  retract_threshold     = %f\n", config.retract_threshold);
 	fprintf(stderr, "  retract_within_island = %s\n", (config.retract_within_island) ? "true" : "false");
+	fprintf(stderr, "  extra_restart_len     = %f\n", config.extra_restart_len);
 	fprintf(stderr, "  cool_layer            = %d\n", config.cool_layer);
 	fprintf(stderr, "  temp                  = %f\n", config.temp);
 	fprintf(stderr, "  bed_temp              = %f\n", config.bed_temp);
