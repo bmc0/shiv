@@ -93,8 +93,8 @@ static struct {
 	fl_t x_center              = 0.0;
 	fl_t y_center              = 0.0;
 	fl_t packing_density       = 0.98;     /* Solid packing density (should be slightly less than 1; 0.98 seems to work well for PLA) */
-	fl_t edge_packing_density  = 0.92;     /* Packing density of the contranied half of the outer perimeter */
-	fl_t seam_packing_density  = 0.90;     /* Packing density of the ends of each shell (the seam) */
+	fl_t edge_packing_density  = 0.95;     /* Packing density of the contranied half of the outer perimeter */
+	fl_t seam_packing_density  = 0.95;     /* Packing density of the ends of each shell (the seam) */
 	fl_t extra_offset          = 0.0;      /* Offset the object by this distance in the xy plane */
 	fl_t edge_offset;                      /* Offset of the outer perimeter (calculated) */
 	fl_t shell_clip;                       /* Shells are clipped by this much (calculated from seam_packing_density) */

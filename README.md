@@ -71,8 +71,8 @@ Option                  | Default value | Description
 `x_center`              |         `0.0` | X coordinate to center the object on.
 `y_center`              |         `0.0` | Y coordinate to center the object on.
 `packing_density`       |        `0.98` | Solid packing density. Should be slightly less than 1. 0.98 seems to work for PLA.
-`edge_packing_density`  |        `0.92` | Packing density of the constrained half of the outer perimeter.
-`seam_packing_density`  |        `0.90` | Packing density of the ends of each shell (the seam).
+`edge_packing_density`  |        `0.95` | Packing density of the constrained half of the outer perimeter.
+`seam_packing_density`  |        `0.95` | Packing density of the ends of each shell (the seam).
 `extra_offset`          |         `0.0` | Offset the object by this distance in the xy plane.
 `infill_density`        |         `0.2` | Sparse infill density.
 `shells`                |           `2` | Number of loops/perimeters/shells (whatever you want to call them).
