@@ -1377,20 +1377,29 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 					c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
 			}
 		}
-		c.AddPaths(o->support_pattern, ClipperLib::ptSubject, false);
+		c.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
+		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		c.Clear();
+		do_offset(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0);
+		c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
+		c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
+		c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		c.Clear();
+		c.AddPaths(o->support_interface_pattern, ClipperLib::ptSubject, false);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		c.Clear();
-		ClipperLib::OpenPathsFromPolyTree(s, slice->support_lines);
+		ClipperLib::OpenPathsFromPolyTree(s, slice->support_interface_lines);
 
 		c.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		c.Clear();
-		c.AddPaths(o->support_interface_pattern, ClipperLib::ptSubject, false);
+		c.AddPaths(o->support_pattern, ClipperLib::ptSubject, false);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-		ClipperLib::OpenPathsFromPolyTree(s, slice->support_interface_lines);
+		ClipperLib::OpenPathsFromPolyTree(s, slice->support_lines);
 	}
 	else {
 		c.AddPaths(o->support_pattern, ClipperLib::ptSubject, false);
