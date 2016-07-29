@@ -1,10 +1,11 @@
 ### Powerspec Ultra3D
 extrusion_width=0.4
 flow_multiplier=1.02
-coarseness=2
-perimeter_feed_rate=25
-loop_feed_rate=40
-infill_feed_rate=40
+coarseness=4
+feed_rate=40
+perimeter_feed_rate=-0.6
+loop_feed_rate=-1.0
+infill_feed_rate=-1.0
 travel_feed_rate=120
 first_layer_mult=0.5
 cool_on_gcode=M106

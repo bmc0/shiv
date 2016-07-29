@@ -1,7 +1,9 @@
 ### Inland PLA
 xy_scale_factor=1.003
 z_scale_factor=1.0
-packing_density=0.99
+packing_density=0.98
+edge_packing_density=0.95
+seam_packing_density=0.95
 material_diameter=1.735
 retract_len=0.9
 retract_speed=20
