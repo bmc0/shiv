@@ -91,8 +91,8 @@ Option                  | Default value | Description
 `retract_len`           |         `1.0` | Retraction length.
 `retract_speed`         |        `20.0` | Retraction speed.
 `restart_speed`         |        `-1.0` | Restart speed. -1 means same as `retract_speed`.
-`retract_min_travel`    |         `1.6` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
-`retract_threshold`     |         `8.0` | Unconditional retraction threshold.
+`retract_min_travel`    |        `10.0` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
+`retract_threshold`     |        `30.0` | Unconditional retraction threshold.
 `retract_within_island` |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
 `extra_restart_len`     |         `0.0` | Extra material length on restart.
 `cool_layer`            |           `1` | Turn on part cooling at this layer (numbered from zero). Set to a negative number to disable cooling.
@@ -116,18 +116,18 @@ Option                  | Default value | Description
 `generate_support`      |       `false` | Generate support structure.
 `support_everywhere`    |       `false` | False means only touching build plate.
 `solid_support_base`    |       `false` | Make supports solid at layer 0.
-`connect_support_lines` |        `true` | Connect support lines together. Makes the support structure more robust, but harder to remove.
+`connect_support_lines` |       `false` | Connect support lines together. Makes the support structure more robust, but harder to remove.
 `poly_fill_type`        |    `non_zero` | Poly fill type for union. Sometimes `even_odd` is useful for broken models with self-intersections and/or incorrect normals.
-`inset_join_type`       |      `square` | Join type for negative offsets. Legal values are `miter`, `square`, and `round`. `square` tends to retain tiny details better, but `miter` produces simpler (smaller) gcode.
+`inset_join_type`       |       `miter` | Join type for negative offsets. Legal values are `miter`, `square`, and `round`. `square` tends to retain tiny details better, but `miter` produces simpler (smaller) gcode.
 `outset_join_type`      |       `miter` | Join type for positive offsets. Legal values are `miter`, `square`, and `round`. Probably best left on `miter`.
 `offset_miter_limit`    |         `5.0` | Sets `ClipperOffset.MiterLimit`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/MiterLimit.htm) for details.
 `offset_arc_tolerance`  |         `5.0` | Sets `ClipperOffset.ArcTolerance`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/ArcTolerance.htm) for details.
-`fill_threshold`        |         `0.2` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
-`support_angle`         |        `60.0` | Angle threshold for support.
+`fill_threshold`        |         `0.5` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
+`support_angle`         |        `70.0` | Angle threshold for support.
 `support_margin`        |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
 `support_vert_margin`   |           `1` | Vertical spacing between support and model, in layers.
-`interface_layers`      |           `1` | Number of solid support interface layers.
-`support_xy_expansion`  |         `2.0` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
+`interface_layers`      |           `0` | Number of solid support interface layers.
+`support_xy_expansion`  |         `2.5` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
 `support_density`       |         `0.3` | Support structure density.
 `support_flow_mult`     |        `0.75` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove.
 `min_layer_time`        |         `8.0` | Minimum layer time.
