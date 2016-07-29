@@ -110,15 +110,18 @@ static struct {
 	fl_t material_diameter     = 1.75;     /* Diameter of material */
 	fl_t material_area;                    /* Cross-sectional area of filament (calculated from material_diameter) */
 	fl_t flow_multiplier       = 1.0;      /* Flow rate adjustment */
-	fl_t perimeter_feed_rate   = 25.0;     /* Outer shell feed rate */
-	fl_t loop_feed_rate        = 40.0;     /* Inner shell feed rate */
-	fl_t infill_feed_rate      = 50.0;
+	fl_t feed_rate             = 50.0;     /* Base feed rate */
+	/* Feed rates below are actual speeds if set to a positive value, or a multiple of 'feed_rate' if set to a negative value.
+	   In other words, '40' is 40 units/s, but '-0.5' is feed_rate * 0.5 units/s. */
+	fl_t perimeter_feed_rate   = -0.5;     /* Outer shell feed rate */
+	fl_t loop_feed_rate        = -1.0;     /* Inner shell feed rate */
+	fl_t infill_feed_rate      = -1.0;
 	fl_t travel_feed_rate      = 120.0;
 	fl_t first_layer_mult      = 0.5;      /* First layer feed rates (except travel) are multiplied by this value */
 	fl_t coast_len             = 0.0;      /* Length to coast (move with the extruder turned off) at the end of a shell */
 	fl_t retract_len           = 1.0;
 	fl_t retract_speed         = 20.0;
-	fl_t restart_speed         = -1.0;     /* -1 means same as retract_speed */
+	fl_t restart_speed         = -1.0;     /* A negative value means a multiple of 'retract_speed' */
 	fl_t retract_min_travel    = 10.0;     /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold     = 30.0;     /* Unconditional retraction threshold */
 	bool retract_within_island = false;
@@ -397,21 +400,21 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 		config.flow_multiplier = atof(value);
 		CHECK_VALUE(config.flow_multiplier >= 0.0, "flow multiplier", ">= 0");
 	}
+	else if (strcmp(key, "feed_rate") == 0) {
+		config.feed_rate = atof(value);
+		CHECK_VALUE(config.feed_rate > 0.0, "feed rate", "> 0");
+	}
 	else if (strcmp(key, "perimeter_feed_rate") == 0) {
 		config.perimeter_feed_rate = atof(value);
-		CHECK_VALUE(config.perimeter_feed_rate > 0.0, "perimeter feed rate", "> 0");
 	}
 	else if (strcmp(key, "loop_feed_rate") == 0) {
 		config.loop_feed_rate = atof(value);
-		CHECK_VALUE(config.loop_feed_rate > 0.0, "loop feed rate", "> 0");
 	}
 	else if (strcmp(key, "infill_feed_rate") == 0) {
 		config.infill_feed_rate = atof(value);
-		CHECK_VALUE(config.infill_feed_rate > 0.0, "infill feed rate", "> 0");
 	}
 	else if (strcmp(key, "travel_feed_rate") == 0) {
 		config.travel_feed_rate = atof(value);
-		CHECK_VALUE(config.travel_feed_rate > 0.0, "travel feed rate", "> 0");
 	}
 	else if (strcmp(key, "first_layer_mult") == 0) {
 		config.first_layer_mult = atof(value);
@@ -431,7 +434,6 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "restart_speed") == 0) {
 		config.restart_speed = atof(value);
-		CHECK_VALUE(config.restart_speed > 0.0 || config.restart_speed == -1.0, "restart_speed", "> 0 or -1");
 	}
 	else if (strcmp(key, "retract_min_travel") == 0) {
 		config.retract_min_travel = atof(value);
@@ -2288,6 +2290,8 @@ static const char * get_join_type_string(ClipperLib::JoinType jt)
 	return NULL;
 }
 
+#define GET_FEED_RATE(x, m) (((x) >= 0.0) ? (x) : (m) * -(x))
+
 int main(int argc, char *argv[])
 {
 	int opt;
@@ -2403,8 +2407,6 @@ int main(int argc, char *argv[])
 	config.edge_offset = config.edge_width / -2.0 - (config.extrusion_area * (1.0 - config.edge_packing_density)) / config.layer_height;
 	config.shell_clip = (config.extrusion_width * config.packing_density) * M_PI / 4.0 * (1.0 - config.seam_packing_density);
 	config.material_area = M_PI * config.material_diameter * config.material_diameter / 4.0;
-	if (config.restart_speed == -1.0)
-		config.restart_speed = config.retract_speed;
 	if (config.cool_on_gcode == NULL)
 		config.cool_on_gcode = strdup(DEFAULT_COOL_ON_STR);
 	if (config.cool_off_gcode == NULL)
@@ -2417,6 +2419,12 @@ int main(int argc, char *argv[])
 	config.xy_extra = (config.extra_offset + config.extrusion_width * config.brim_lines) * 2.0;
 	if (config.generate_support)
 		config.xy_extra += config.support_xy_expansion * 2.0;
+	/* set feed rates */
+	config.perimeter_feed_rate = GET_FEED_RATE(config.perimeter_feed_rate, config.feed_rate);
+	config.loop_feed_rate = GET_FEED_RATE(config.loop_feed_rate, config.feed_rate);
+	config.infill_feed_rate = GET_FEED_RATE(config.infill_feed_rate, config.feed_rate);
+	config.travel_feed_rate = GET_FEED_RATE(config.travel_feed_rate, config.feed_rate);
+	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);
 
 	fprintf(stderr, "configuration:\n");
 	fprintf(stderr, "  layer_height          = %f\n", config.layer_height);
@@ -2446,6 +2454,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  material_diameter     = %f\n", config.material_diameter);
 	fprintf(stderr, " *material_area         = %f\n", config.material_area);
 	fprintf(stderr, "  flow_multiplier       = %f\n", config.flow_multiplier);
+	fprintf(stderr, "  feed_rate             = %f\n", config.feed_rate);
 	fprintf(stderr, "  perimeter_feed_rate   = %f\n", config.perimeter_feed_rate);
 	fprintf(stderr, "  loop_feed_rate        = %f\n", config.loop_feed_rate);
 	fprintf(stderr, "  infill_feed_rate      = %f\n", config.infill_feed_rate);

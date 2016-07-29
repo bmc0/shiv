@@ -82,15 +82,16 @@ Option                  | Default value | Description
 `solid_fill_expansion`  |         `1.0` | Distance to expand solid infill, in units of `extrusion_width`.
 `material_diameter`     |        `1.75` | Diameter of material.
 `flow_multiplier`       |         `1.0` | Flow rate adjustment to compensate for incorrect E-steps or E-step variation between material types.
-`perimeter_feed_rate`   |        `25.0` | Outer shell feed rate.
-`loop_feed_rate`        |        `40.0` | Inner shell(s) feed rate.
-`infill_feed_rate`      |        `50.0` | Infill feed rate.
+`feed_rate`             |        `50.0` | Base feed rate. Feed rates below are actual speeds if set to a positive value, or a multiple of `feed_rate` if set to a negative value. In other words, `40` is 40 units/s, but `-0.5` is `feed_rate * 0.5` units/s.
+`perimeter_feed_rate`   |        `-0.5` | Outer shell feed rate.
+`loop_feed_rate`        |        `-1.0` | Inner shell(s) feed rate.
+`infill_feed_rate`      |        `-1.0` | Infill feed rate.
 `travel_feed_rate`      |       `120.0` | Travel feed rate.
 `first_layer_mult`      |         `0.5` | First layer feed rates (except travel) are multiplied by this value.
 `coast_len`             |         `0.0` | Length to coast (move with the extruder turned off) at the end of a shell. This can reduce start/end blobs if set correctly, but will cause gaps if set too high.
 `retract_len`           |         `1.0` | Retraction length.
 `retract_speed`         |        `20.0` | Retraction speed.
-`restart_speed`         |        `-1.0` | Restart speed. -1 means same as `retract_speed`.
+`restart_speed`         |        `-1.0` | Restart speed. A negative value means a multiple of `retract_speed`.
 `retract_min_travel`    |        `10.0` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
 `retract_threshold`     |        `30.0` | Unconditional retraction threshold.
 `retract_within_island` |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
