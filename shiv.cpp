@@ -116,6 +116,7 @@ static struct {
 	fl_t perimeter_feed_rate   = -0.5;     /* Outer shell feed rate */
 	fl_t loop_feed_rate        = -1.0;     /* Inner shell feed rate */
 	fl_t infill_feed_rate      = -1.0;
+	fl_t support_feed_rate     = -1.0;
 	fl_t travel_feed_rate      = 120.0;
 	fl_t first_layer_mult      = 0.5;      /* First layer feed rates (except travel) are multiplied by this value */
 	fl_t coast_len             = 0.0;      /* Length to coast (move with the extruder turned off) at the end of a shell */
@@ -412,6 +413,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "infill_feed_rate") == 0) {
 		config.infill_feed_rate = atof(value);
+	}
+	else if (strcmp(key, "support_feed_rate") == 0) {
+		config.support_feed_rate = atof(value);
 	}
 	else if (strcmp(key, "travel_feed_rate") == 0) {
 		config.travel_feed_rate = atof(value);
@@ -1858,7 +1862,7 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 	ClipperLib::Path last_line(2);
 	bool first = true;
 	fl_t flow_adjust = (layer_num > 0) ? config.support_flow_mult : 1.0;
-	fl_t feed_rate = (layer_num > 0) ? config.infill_feed_rate : config.perimeter_feed_rate;
+	fl_t feed_rate = (layer_num > 0) ? config.support_feed_rate : config.perimeter_feed_rate;
 	while (!lines.empty()) {
 		auto best = lines.end();
 		fl_t best_dist = HUGE_VAL;
@@ -2423,6 +2427,7 @@ int main(int argc, char *argv[])
 	config.perimeter_feed_rate = GET_FEED_RATE(config.perimeter_feed_rate, config.feed_rate);
 	config.loop_feed_rate = GET_FEED_RATE(config.loop_feed_rate, config.feed_rate);
 	config.infill_feed_rate = GET_FEED_RATE(config.infill_feed_rate, config.feed_rate);
+	config.support_feed_rate = GET_FEED_RATE(config.support_feed_rate, config.feed_rate);
 	config.travel_feed_rate = GET_FEED_RATE(config.travel_feed_rate, config.feed_rate);
 	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);
 
@@ -2458,6 +2463,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  perimeter_feed_rate   = %f\n", config.perimeter_feed_rate);
 	fprintf(stderr, "  loop_feed_rate        = %f\n", config.loop_feed_rate);
 	fprintf(stderr, "  infill_feed_rate      = %f\n", config.infill_feed_rate);
+	fprintf(stderr, "  support_feed_rate     = %f\n", config.support_feed_rate);
 	fprintf(stderr, "  travel_feed_rate      = %f\n", config.travel_feed_rate);
 	fprintf(stderr, "  first_layer_mult      = %f\n", config.first_layer_mult);
 	fprintf(stderr, "  coast_len             = %f\n", config.coast_len);

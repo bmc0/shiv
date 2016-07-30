@@ -86,6 +86,7 @@ Option                  | Default value | Description
 `perimeter_feed_rate`   |        `-0.5` | Outer shell feed rate.
 `loop_feed_rate`        |        `-1.0` | Inner shell(s) feed rate.
 `infill_feed_rate`      |        `-1.0` | Infill feed rate.
+`support_feed_rate`     |        `-1.0` | Support structure feed rate.
 `travel_feed_rate`      |       `120.0` | Travel feed rate.
 `first_layer_mult`      |         `0.5` | First layer feed rates (except travel) are multiplied by this value.
 `coast_len`             |         `0.0` | Length to coast (move with the extruder turned off) at the end of a shell. This can reduce start/end blobs if set correctly, but will cause gaps if set too high.
