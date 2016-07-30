@@ -1006,6 +1006,13 @@ static void do_offset(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t dist
 		co.Execute(dest, FL_T_TO_CINT(dist));
 }
 
+static void do_offset_square(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t dist)
+{
+	ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
+	co.AddPaths(src, ClipperLib::jtSquare, ClipperLib::etClosedPolygon);
+	co.Execute(dest, FL_T_TO_CINT(dist));
+}
+
 static void generate_insets(struct slice *slice)
 {
 	for (struct island &island : slice->islands) {
@@ -1246,7 +1253,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			if (config.fill_threshold > 0.0)
 				remove_overlap(s_tmp, s_tmp, config.fill_threshold);
 			if (config.solid_fill_expansion > 0.0 || config.solid_infill_clip_offset > 0.0) {
-				do_offset(s_tmp, s_tmp, config.solid_infill_clip_offset + config.solid_fill_expansion * config.extrusion_width, 0.0);
+				do_offset_square(s_tmp, s_tmp, config.solid_infill_clip_offset + config.solid_fill_expansion * config.extrusion_width);
 				c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
 				c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
 				c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
@@ -1308,7 +1315,7 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 	c.AddPaths(clip_paths, ClipperLib::ptClip, true);
 	c.Execute(ClipperLib::ctDifference, o->slices[slice_index].layer_support_map, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 	c.Clear();
-	co.AddPaths(o->slices[slice_index].layer_support_map, config.outset_join_type, ClipperLib::etClosedPolygon);
+	co.AddPaths(o->slices[slice_index].layer_support_map, ClipperLib::jtSquare, ClipperLib::etClosedPolygon);
 	co.Execute(o->slices[slice_index].layer_support_map, FL_T_TO_CINT(config.support_xy_expansion));
 }
 
@@ -1390,7 +1397,7 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		c.Clear();
-		do_offset(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0);
+		do_offset_square(s_tmp, s_tmp, config.extrusion_width / config.support_density);
 		c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
 		c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
