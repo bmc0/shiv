@@ -159,7 +159,7 @@ static struct {
 	fl_t support_margin        = 0.6;      /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin    = 1;        /* Vertical spacing between support and model, in layers */
 	int interface_layers       = 0;        /* Number of solid support interface layers */
-	fl_t support_xy_expansion  = 2.5;      /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
+	fl_t support_xy_expansion  = 2.0;      /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
 	fl_t support_density       = 0.3;      /* Support structure density */
 	fl_t support_flow_mult     = 0.75;     /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. */
 	fl_t min_layer_time        = 8.0;      /* Slow down if the estimated layer time is less than this value */
@@ -572,7 +572,7 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "support_xy_expansion") == 0) {
 		config.support_xy_expansion = atof(value);
-		CHECK_VALUE(config.support_xy_expansion > 0.0, "support xy expansion", "> 0");
+		CHECK_VALUE(config.support_xy_expansion >= 0.0, "support xy expansion", ">= 0");
 	}
 	else if (strcmp(key, "support_density") == 0) {
 		config.support_density = atof(value);
@@ -1316,7 +1316,7 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 	c.Execute(ClipperLib::ctDifference, o->slices[slice_index].layer_support_map, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 	c.Clear();
 	co.AddPaths(o->slices[slice_index].layer_support_map, ClipperLib::jtSquare, ClipperLib::etClosedPolygon);
-	co.Execute(o->slices[slice_index].layer_support_map, FL_T_TO_CINT(config.support_xy_expansion));
+	co.Execute(o->slices[slice_index].layer_support_map, FL_T_TO_CINT(config.support_xy_expansion + (0.5 + config.support_margin) * config.edge_width - config.edge_offset));
 }
 
 static void generate_support_boundaries(struct slice *slice)
@@ -2429,7 +2429,7 @@ int main(int argc, char *argv[])
 	config.solid_infill_clip_offset = MAXIMUM(config.solid_infill_clip_offset, 0.0);
 	config.xy_extra = (config.extra_offset + config.extrusion_width * config.brim_lines) * 2.0;
 	if (config.generate_support)
-		config.xy_extra += config.support_xy_expansion * 2.0;
+		config.xy_extra += (config.support_xy_expansion + (0.5 + config.support_margin) * config.edge_width - config.edge_offset) * 2.0;
 	/* set feed rates */
 	config.perimeter_feed_rate = GET_FEED_RATE(config.perimeter_feed_rate, config.feed_rate);
 	config.loop_feed_rate = GET_FEED_RATE(config.loop_feed_rate, config.feed_rate);
