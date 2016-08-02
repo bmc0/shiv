@@ -2239,6 +2239,7 @@ static int write_gcode(const char *path, struct object *o)
 		return 1;
 	bool is_first_move = true;
 	struct machine m = {};
+	fl_t total_e = 0.0;
 	fl_t feed_rate_mult = config.first_layer_mult;
 	fprintf(stderr, "write gcode to %s...", path);
 	write_gcode_string(config.start_gcode, f);
@@ -2258,15 +2259,18 @@ static int write_gcode(const char *path, struct object *o)
 			is_first_move = false;
 		}
 		feed_rate_mult = 1.0;
+		total_e += m.e;
+		m.e = 0.0;
+		fputs("G92 E0\n", f);
 	}
 	write_gcode_string(config.cool_off_gcode, f);
 	write_gcode_string(config.end_gcode, f);
 	fputs(" done\n", stderr);
-	fl_t mass = config.material_area * m.e * config.material_density / config.flow_multiplier;
-	fprintf(f, "; material length = %.4f\n", m.e / config.flow_multiplier);
+	fl_t mass = config.material_area * total_e * config.material_density / config.flow_multiplier;
+	fprintf(f, "; material length = %.4f\n", total_e / config.flow_multiplier);
 	fprintf(f, "; material mass   = %.4f\n", mass);
 	fprintf(f, "; material cost   = %.4f\n", mass * config.material_cost);
-	fprintf(stderr, "material length = %.4f\n", m.e / config.flow_multiplier);
+	fprintf(stderr, "material length = %.4f\n", total_e / config.flow_multiplier);
 	fprintf(stderr, "material mass   = %.4f\n", mass);
 	fprintf(stderr, "material cost   = %.4f\n", mass * config.material_cost);
 	long int bytes = ftell(f);
