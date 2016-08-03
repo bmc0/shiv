@@ -245,7 +245,7 @@ struct slice {
 struct machine {
 	ClipperLib::cInt x, y, z;
 	fl_t e, feed_rate;
-	bool is_retracted, new_island;
+	bool is_retracted, force_retract;
 };
 
 static void die(const char *s, int r)
@@ -1691,6 +1691,76 @@ static bool crosses_exposed_surface(struct machine *m, struct island *island, Cl
 	return false;
 }
 
+static size_t find_nearest_path(ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, size_t *r_start)
+{
+	size_t best = 0, start = 0;
+	fl_t best_dist = HUGE_VAL;
+	fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	for (size_t i = 0; i < p.size(); ++i) {
+		for (size_t k = 0; k < p[i].size(); ++k) {
+			fl_t x1 = CINT_TO_FL_T(p[i][k].X), y1 = CINT_TO_FL_T(p[i][k].Y);
+			fl_t dist = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+			if (dist < best_dist) {
+				best_dist = dist;
+				best = i;
+				start = k;
+			}
+		}
+	}
+	if (r_dist)
+		*r_dist = best_dist;
+	if (r_start)
+		*r_start = start;
+	return best;
+}
+
+static size_t find_nearest_aligned_path(ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
+{
+	size_t best = 0;
+	fl_t best_dist = HUGE_VAL;
+	fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	for (size_t i = 0; i < p.size(); ++i) {
+		fl_t x1 = CINT_TO_FL_T(p[i][0].X), y1 = CINT_TO_FL_T(p[i][0].Y);
+		fl_t dist = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+		if (dist < best_dist) {
+			best_dist = dist;
+			best = i;
+		}
+	}
+	if (r_dist)
+		*r_dist = best_dist;
+	return best;
+}
+
+static size_t find_nearest_segment(ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, bool *r_flip)
+{
+	bool flip = false;
+	size_t best = 0;
+	fl_t best_dist = HUGE_VAL;
+	fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	for (size_t i = 0; i < p.size(); ++i) {
+		fl_t x1_0 = CINT_TO_FL_T(p[i][0].X), y1_0 = CINT_TO_FL_T(p[i][0].Y);
+		fl_t x1_1 = CINT_TO_FL_T(p[i][1].X), y1_1 = CINT_TO_FL_T(p[i][1].Y);
+		fl_t dist0 = (x1_0 - x0) * (x1_0 - x0) + (y1_0 - y0) * (y1_0 - y0);
+		fl_t dist1 = (x1_1 - x0) * (x1_1 - x0) + (y1_1 - y0) * (y1_1 - y0);
+		if (dist0 < best_dist) {
+			best_dist = dist0;
+			best = i;
+			flip = false;
+		}
+		if (dist1 < best_dist) {
+			best_dist = dist1;
+			best = i;
+			flip = true;
+		}
+	}
+	if (r_dist)
+		*r_dist = best_dist;
+	if (r_flip)
+		*r_flip = flip;
+	return best;
+}
+
 static void append_g_move(struct slice *slice, struct g_move &move, fl_t len)
 {
 	/* FIXME: should probably take acceleration into account... */
@@ -1706,7 +1776,7 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 	fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 	if (is_travel) {
 		if (!m->is_retracted && config.retract_len > 0.0
-			&& (m->new_island
+			&& (m->force_retract
 				|| len > ((doing_infill) ? config.retract_threshold : config.retract_min_travel)
 				|| (config.retract_within_island && len > config.retract_min_travel)
 				|| (island && crosses_boundary(m, island, x, y))
@@ -1717,7 +1787,7 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 			append_g_move(slice, retract_move, config.retract_len);
 			m->is_retracted = true;
 		}
-		m->new_island = false;
+		m->force_retract = false;
 	}
 	else {
 		if (m->is_retracted && config.retract_len > 0.0) {
@@ -1842,25 +1912,10 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 {
 	while (!o->brim.empty()) {
-		auto best = o->brim.end();
-		fl_t best_dist = HUGE_VAL;
-		size_t start_idx = 0;
-		fl_t m_x = CINT_TO_FL_T(m->x), m_y = CINT_TO_FL_T(m->y);
-		for (auto it = o->brim.begin(); it != o->brim.end(); ++it) {
-			for (size_t k = 0; k < (*it).size(); ++k) {
-				fl_t x = CINT_TO_FL_T((*it)[k].X), y = CINT_TO_FL_T((*it)[k].Y);
-				fl_t dist = (x - m_x) * (x - m_x) + (y - m_y) * (y - m_y);
-				if (dist < best_dist) {
-					best_dist = dist;
-					best = it;
-					start_idx = k;
-				}
-			}
-		}
-		if (best != o->brim.end()) {
-			generate_closed_path_moves(*best, start_idx, &o->slices[0], NULL, m, z, config.perimeter_feed_rate);
-			o->brim.erase(best);
-		}
+		size_t best = 0, start = 0;
+		find_nearest_path(o->brim, m->x, m->y, NULL, &start);
+		generate_closed_path_moves(o->brim[best], start, &o->slices[0], NULL, m, z, config.perimeter_feed_rate);
+		o->brim.erase(o->brim.begin() + best);
 	}
 }
 
@@ -1871,208 +1926,128 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 	fl_t flow_adjust = (layer_num > 0) ? config.support_flow_mult : 1.0;
 	fl_t feed_rate = (layer_num > 0) ? config.support_feed_rate : config.perimeter_feed_rate;
 	while (!lines.empty()) {
-		auto best = lines.end();
-		fl_t best_dist = HUGE_VAL;
-		bool flip_points = false;
-		fl_t m_x = CINT_TO_FL_T(m->x), m_y = CINT_TO_FL_T(m->y);
-		for (auto it = lines.begin(); it != lines.end(); ++it) {
-			fl_t x0 = CINT_TO_FL_T((*it)[0].X), y0 = CINT_TO_FL_T((*it)[0].Y);
-			fl_t x1 = CINT_TO_FL_T((*it)[1].X), y1 = CINT_TO_FL_T((*it)[1].Y);
-			fl_t dist0 = (x0 - m_x) * (x0 - m_x) + (y0 - m_y) * (y0 - m_y);
-			fl_t dist1 = (x1 - m_x) * (x1 - m_x) + (y1 - m_y) * (y1 - m_y);
-			fl_t dist = MINIMUM(dist0, dist1);
-			if (dist < best_dist) {
-				flip_points = (dist1 < dist0);
-				best_dist = dist;
-				best = it;
-			}
-		}
-		if (best != lines.end()) {
-			ClipperLib::Path &p = *best;
-			fl_t x0 = CINT_TO_FL_T(p[0].X), y0 = CINT_TO_FL_T(p[0].Y);
-			fl_t x1 = CINT_TO_FL_T(p[1].X), y1 = CINT_TO_FL_T(p[1].Y);
-			fl_t len = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
-			if (len > min_len) {
-				bool crosses_boundary = false;
-				if (!first) {
-					ClipperLib::IntPoint p0(m->x, m->y);
-					for (ClipperLib::Path &bound : slice->support_boundaries) {
-						if (get_boundary_crossing(bound, last_line[0], last_line[1]) >= 0 || get_boundary_crossing(bound, p0, (flip_points) ? p[1] : p[0]) >= 0) {
-							crosses_boundary = true;
-							m->new_island = true;  /* Force retract */
-							break;
-						}
+		bool flip_points;
+		fl_t best_dist;
+		size_t best = find_nearest_segment(lines, m->x, m->y, &best_dist, &flip_points);
+		ClipperLib::Path &p = lines[best];
+		fl_t x0 = CINT_TO_FL_T(p[0].X), y0 = CINT_TO_FL_T(p[0].Y);
+		fl_t x1 = CINT_TO_FL_T(p[1].X), y1 = CINT_TO_FL_T(p[1].Y);
+		fl_t len = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+		if (len > min_len) {
+			bool crosses_boundary = false;
+			if (!first) {
+				ClipperLib::IntPoint p0(m->x, m->y);
+				for (ClipperLib::Path &bound : slice->support_boundaries) {
+					if (get_boundary_crossing(bound, last_line[0], last_line[1]) >= 0 || get_boundary_crossing(bound, p0, (flip_points) ? p[1] : p[0]) >= 0) {
+						crosses_boundary = true;
+						m->force_retract = true;
+						break;
 					}
 				}
-				bool connect = (!first && !crosses_boundary && best_dist < connect_threshold);
-				if (flip_points) {
-					if (connect)
-						linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
-					else
-						linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
-					linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
-				}
-				else {
-					if (connect)
-						linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
-					else
-						linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
-					linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
-				}
-				last_line = p;
-				first = false;
 			}
-			lines.erase(best);
+			bool connect = (!first && !crosses_boundary && best_dist < connect_threshold);
+			if (flip_points) {
+				if (connect)
+					linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
+				else
+					linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
+				linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
+			}
+			else {
+				if (connect)
+					linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
+				else
+					linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
+				linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
+			}
+			last_line = p;
+			first = false;
 		}
+		lines.erase(lines.begin() + best);
 	}
 }
 
 static void plan_insets_weighted(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, bool outside_first)
 {
-	if (config.shells > 0) {
-		int inset_num;
-		do {
-			auto best = island->insets[0].begin();
-			fl_t best_dist = HUGE_VAL;
-			inset_num = -1;
-			size_t start_idx = 0;
-			for (int i = 0; i < config.shells; ++i) {
-				if (!island->insets[i].empty()) {
-					fl_t m_x = CINT_TO_FL_T(m->x), m_y = CINT_TO_FL_T(m->y);
-					if (config.align_seams) {
-						for (auto it = island->insets[i].begin(); it != island->insets[i].end(); ++it) {
-							fl_t x = CINT_TO_FL_T((*it)[0].X), y = CINT_TO_FL_T((*it)[0].Y);
-							fl_t dist = (x - m_x) * (x - m_x) + (y - m_y) * (y - m_y);
-							if (outside_first) {
-								if (i != 0)
-									dist = dist * 2.0 * (i + 1) + 10.0;  /* prefer exterior */
-							}
-							else {
-								if (i != config.shells - 1)
-									dist = dist * 2.0 * (config.shells - i) + 10.0;  /* prefer interior */
-							}
-							if (dist < best_dist) {
-								best_dist = dist;
-								best = it;
-								start_idx = 0;
-								inset_num = i;
-							}
-						}
-					}
-					else {
-						for (auto it = island->insets[i].begin(); it != island->insets[i].end(); ++it) {
-							for (size_t k = 0; k < (*it).size(); ++k) {
-								fl_t x = CINT_TO_FL_T((*it)[k].X), y = CINT_TO_FL_T((*it)[k].Y);
-								fl_t dist = (x - m_x) * (x - m_x) + (y - m_y) * (y - m_y);
-								if (outside_first) {
-									if (i != 0)
-										dist = dist * 2.0 * (i + 1) + 10.0;  /* prefer exterior */
-								}
-								else {
-									if (i != config.shells - 1)
-										dist = dist * 2.0 * (config.shells - i) + 10.0;  /* prefer interior */
-								}
-								if (dist < best_dist) {
-									best_dist = dist;
-									best = it;
-									start_idx = k;
-									inset_num = i;
-								}
-							}
-						}
-					}
+	for (;;) {
+		bool done = true;
+		fl_t best_dist = HUGE_VAL;
+		size_t best = 0, inset = 0, start = 0;
+		for (int i = 0; i < config.shells; ++i) {
+			if (!island->insets[i].empty()) {
+				fl_t dist;
+				size_t r, start_tmp = 0;
+				if (config.align_seams)
+					r = find_nearest_aligned_path(island->insets[i], m->x, m->y, &dist);
+				else
+					r = find_nearest_path(island->insets[i], m->x, m->y, &dist, &start_tmp);
+				if (outside_first) {
+					if (i != 0)
+						dist = dist * (i + 1) + config.retract_min_travel;  /* prefer exterior */
+				}
+				else {
+					if (i != config.shells - 1)
+						dist = dist * (config.shells - i) + config.retract_min_travel;  /* prefer interior */
+				}
+				if (dist < best_dist) {
+					best_dist = dist;
+					best = r;
+					inset = i;
+					start = start_tmp;
+					done = false;
 				}
 			}
-			if (inset_num != -1) {
-				generate_closed_path_moves(*best, start_idx, slice, island, m, z, (inset_num == 0) ? config.perimeter_feed_rate : config.loop_feed_rate);
-				island->insets[inset_num].erase(best);
-			}
-		} while (inset_num != -1);
+		}
+		if (done)
+			break;
+		generate_closed_path_moves(island->insets[inset][best], start, slice, island, m, z, (inset == 0) ? config.perimeter_feed_rate : config.loop_feed_rate);
+		island->insets[inset].erase(island->insets[inset].begin() + best);
 	}
 }
 
 static void plan_insets_strict_order(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, bool outside_first)
 {
-	if (config.shells > 0) {
-		int i = (outside_first) ? 0 : config.shells - 1;
-		while (i >= 0 && i < config.shells) {
-			if (island->insets[i].empty()) {
-				i = (outside_first) ? i + 1 : i - 1;
-				continue;
-			}
-			auto best = island->insets[i].end();
-			fl_t best_dist = HUGE_VAL;
-			size_t start_idx = 0;
-			fl_t m_x = CINT_TO_FL_T(m->x), m_y = CINT_TO_FL_T(m->y);
-			if (config.align_seams) {
-				for (auto it = island->insets[i].begin(); it != island->insets[i].end(); ++it) {
-					fl_t x = CINT_TO_FL_T((*it)[0].X), y = CINT_TO_FL_T((*it)[0].Y);
-					fl_t dist = (x - m_x) * (x - m_x) + (y - m_y) * (y - m_y);
-					if (dist < best_dist) {
-						best_dist = dist;
-						best = it;
-						start_idx = 0;
-					}
-				}
-			}
-			else {
-				for (auto it = island->insets[i].begin(); it != island->insets[i].end(); ++it) {
-					for (size_t k = 0; k < (*it).size(); ++k) {
-						fl_t x = CINT_TO_FL_T((*it)[k].X), y = CINT_TO_FL_T((*it)[k].Y);
-						fl_t dist = (x - m_x) * (x - m_x) + (y - m_y) * (y - m_y);
-						if (dist < best_dist) {
-							best_dist = dist;
-							best = it;
-							start_idx = k;
-						}
-					}
-				}
-			}
-			generate_closed_path_moves(*best, start_idx, slice, island, m, z, (i == 0) ? config.perimeter_feed_rate : config.loop_feed_rate);
-			island->insets[i].erase(best);
+	int i = (outside_first) ? 0 : config.shells - 1;
+	while (i >= 0 && i < config.shells) {
+		if (island->insets[i].empty()) {
+			i = (outside_first) ? i + i : i - 1;
+			continue;
 		}
+		size_t best, start = 0;
+		if (config.align_seams)
+			best = find_nearest_aligned_path(island->insets[i], m->x, m->y, NULL);
+		else
+			best = find_nearest_path(island->insets[i], m->x, m->y, NULL, &start);
+		generate_closed_path_moves(island->insets[i][best], start, slice, island, m, z, (i == 0) ? config.perimeter_feed_rate : config.loop_feed_rate);
+		island->insets[i].erase(island->insets[i].begin() + best);
 	}
 }
 
 static void plan_insets(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, bool outside_first)
 {
-	if (config.strict_shell_order)
-		plan_insets_strict_order(slice, island, m, z, outside_first);
-	else
-		plan_insets_weighted(slice, island, m, z, outside_first);
+	if (config.shells > 0) {
+		if (config.strict_shell_order)
+			plan_insets_strict_order(slice, island, m, z, outside_first);
+		else
+			plan_insets_weighted(slice, island, m, z, outside_first);
+	}
 }
 
-static void plan_infill(ClipperLib::Paths &paths, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z)
+static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z)
 {
-	while (!paths.empty()) {
-		auto best = paths.end();
-		fl_t best_dist = HUGE_VAL;
-		bool flip_points = false;
-		fl_t m_x = CINT_TO_FL_T(m->x), m_y = CINT_TO_FL_T(m->y);
-		for (auto it = paths.begin(); it != paths.end(); ++it) {
-			fl_t x0 = CINT_TO_FL_T((*it)[0].X), y0 = CINT_TO_FL_T((*it)[0].Y);
-			fl_t x1 = CINT_TO_FL_T((*it)[1].X), y1 = CINT_TO_FL_T((*it)[1].Y);
-			fl_t dist0 = (x0 - m_x) * (x0 - m_x) + (y0 - m_y) * (y0 - m_y);
-			fl_t dist1 = (x1 - m_x) * (x1 - m_x) + (y1 - m_y) * (y1 - m_y);
-			fl_t dist = MINIMUM(dist0, dist1);
-			if (dist < best_dist) {
-				flip_points = (dist1 < dist0);
-				best_dist = dist;
-				best = it;
-			}
+	while (!lines.empty()) {
+		bool flip_points;
+		size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
+		ClipperLib::Path &p = lines[best];
+		if (flip_points) {
+			linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+			linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false, true);
 		}
-		if (best != paths.end()) {
-			ClipperLib::Path &p = *best;
-			if (flip_points) {
-				linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-				linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false, true);
-			}
-			else {
-				linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-				linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false, true);
-			}
-			paths.erase(best);
+		else {
+			linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+			linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false, true);
 		}
+		lines.erase(lines.begin() + best);
 	}
 }
 
@@ -2082,7 +2057,7 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 	m.x = FL_T_TO_CINT(o->c.x - (o->w + config.xy_extra) / 2.0);
 	m.y = FL_T_TO_CINT(o->c.y - (o->d + config.xy_extra) / 2.0);
 	m.z = FL_T_TO_CINT(((fl_t) layer_num) * config.layer_height + config.layer_height);
-	m.is_retracted = true;  /* NOTE: This will cause unconditional retraction on layer change */
+	m.is_retracted = true;  /* We always retract at the end of a layer */
 	if (layer_num == 0 && config.brim_lines > 0)
 		plan_brim(o, &m, m.z);
 	if (config.generate_support) {
@@ -2090,35 +2065,20 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 		plan_support(slice, slice->support_lines, &m, m.z, layer_num, config.extrusion_width * 2.0, (config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0 : 0.0);
 	}
 	while (slice->islands.size() > 0) {
-		auto best = slice->islands.begin();
+		size_t best = 0;
 		fl_t best_dist = HUGE_VAL;
-		fl_t m_x = CINT_TO_FL_T(m.x), m_y = CINT_TO_FL_T(m.y);
-		for (auto it = slice->islands.begin(); it != slice->islands.end(); ++it) {
-			if (config.align_seams && config.shells > 0) {
-				for (ClipperLib::Path &p : it->insets[0]) {
-					fl_t x = CINT_TO_FL_T(p[0].X), y = CINT_TO_FL_T(p[0].Y);
-					fl_t dist = (x - m_x) * (x - m_x) + (y - m_y) * (y - m_y);
-					if (dist < best_dist) {
-						best_dist = dist;
-						best = it;
-					}
-				}
-			}
-			else {
-				for (ClipperLib::Path &p : (config.shells > 0) ? it->insets[0] : it->infill_insets) {
-					for (size_t i = 0; i < p.size(); ++i) {
-						fl_t x = CINT_TO_FL_T(p[i].X), y = CINT_TO_FL_T(p[i].Y);
-						fl_t dist = (x - m_x) * (x - m_x) + (y - m_y) * (y - m_y);
-						if (dist < best_dist) {
-							best_dist = dist;
-							best = it;
-						}
-					}
-				}
+		for (size_t i = 0; i < slice->islands.size(); ++i) {
+			fl_t dist;
+			if (config.align_seams && config.shells > 0)
+				find_nearest_aligned_path(slice->islands[i].insets[0], m.x, m.y, &dist);
+			else
+				find_nearest_path((config.shells > 0) ? slice->islands[i].insets[0] : slice->islands[i].infill_insets, m.x, m.y, &dist, NULL);
+			if (dist < best_dist) {
+				best = i;
+				best_dist = dist;
 			}
 		}
-		struct island &island = *best;
-		m.new_island = true;
+		struct island &island = slice->islands[best];
 		if (!config.solid_infill_first) {
 			/* Concat sparse infill into solid infill vector so the infill pathing is planned together */
 			island.solid_infill.insert(island.solid_infill.end(), island.sparse_infill.begin(), island.sparse_infill.end());
@@ -2138,10 +2098,9 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 		}
 		free(island.insets);
 		free(island.inset_gaps);
-		slice->islands.erase(best);
+		slice->islands.erase(slice->islands.begin() + best);
 	}
-	/* We need to retract at the end of each layer */
-	if (!m.is_retracted) {
+	if (!m.is_retracted) {  /* Retract at the end of each layer */
 		struct g_move retract_move = { m.x, m.y, m.z, -config.retract_len, config.retract_speed, false, false, false };
 		append_g_move(slice, retract_move, config.retract_len);
 	}
@@ -2258,6 +2217,7 @@ static int write_gcode(const char *path, struct object *o)
 			write_gcode_move(f, &move, &m, feed_rate_mult, is_first_move);
 			is_first_move = false;
 		}
+		slice->moves.clear();
 		feed_rate_mult = 1.0;
 		total_e += m.e;
 		m.e = 0.0;
