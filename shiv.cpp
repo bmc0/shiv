@@ -1803,7 +1803,7 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 	}
 	if (extra_e_len != 0.0) {
 		struct g_move restart_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true, false, true };
-		append_g_move(slice, restart_move, extra_e_len);
+		append_g_move(slice, restart_move, fabs(extra_e_len));
 	}
 	if (x != m->x || y != m->y || z != m->z || move.e != 0.0) {
 		append_g_move(slice, move, len);
