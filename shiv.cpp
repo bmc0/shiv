@@ -1090,22 +1090,16 @@ static void generate_insets(struct slice *slice)
 	}
 }
 
-static void generate_infill_patterns(struct object *o)
+static void generate_even_line_fill(const ClipperLib::cInt min_x, const ClipperLib::cInt min_y, const ClipperLib::cInt max_x, const ClipperLib::cInt max_y, ClipperLib::Paths &p, fl_t density)
 {
 	ClipperLib::Path line(2);
-	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width * sqrt(2.0));
-	const ClipperLib::cInt min_x = FL_T_TO_CINT(o->c.x - (o->w + config.xy_extra) / 2.0);
-	const ClipperLib::cInt min_y = FL_T_TO_CINT(o->c.y - (o->d + config.xy_extra) / 2.0);
-	const ClipperLib::cInt max_x = FL_T_TO_CINT(o->c.x + (o->w + config.xy_extra) / 2.0);
-	const ClipperLib::cInt max_y = FL_T_TO_CINT(o->c.y + (o->d + config.xy_extra) / 2.0);
-
-	/* generate even solid fill */
+	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width * 1.4142135623 / density);
 	line[0].X = min_x;
 	line[0].Y = min_y + move;
 	line[1].X = min_x + move;
 	line[1].Y = min_y;
 	while (line[0].X < max_x && line[1].Y < max_y) {
-		o->solid_infill_patterns[0].push_back(line);
+		p.push_back(line);
 		if (line[0].Y >= max_y)
 			line[0].X += move;
 		else
@@ -1116,14 +1110,18 @@ static void generate_infill_patterns(struct object *o)
 		else
 			line[1].X += move;
 	}
+}
 
-	/* generate odd solid fill */
+static void generate_odd_line_fill(const ClipperLib::cInt min_x, const ClipperLib::cInt min_y, const ClipperLib::cInt max_x, const ClipperLib::cInt max_y, ClipperLib::Paths &p, fl_t density)
+{
+	ClipperLib::Path line(2);
+	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width * 1.4142135623 / density);
 	line[0].X = min_x;
 	line[0].Y = max_y - move;
 	line[1].X = min_x + move;
 	line[1].Y = max_y;
 	while (line[0].X < max_x && line[1].Y > min_y) {
-		o->solid_infill_patterns[1].push_back(line);
+		p.push_back(line);
 		if (line[0].Y <= min_y)
 			line[0].X += move;
 		else
@@ -1134,65 +1132,54 @@ static void generate_infill_patterns(struct object *o)
 		else
 			line[1].X += move;
 	}
+}
 
-	if (config.infill_density > 0.0) {
-		const ClipperLib::cInt sparse_move = FL_T_TO_CINT(config.extrusion_width * sqrt(2.0) / config.infill_density * 2.0);
-		line[0].X = min_x;
-		line[0].Y = min_y + sparse_move;
-		line[1].X = min_x + sparse_move;
-		line[1].Y = min_y;
-		while (line[0].X < max_x && line[1].Y < max_y) {
-			o->sparse_infill_pattern.push_back(line);
-			if (line[0].Y >= max_y)
-				line[0].X += sparse_move;
-			else
-				line[0].Y += sparse_move;
-
-			if (line[1].X >= max_x)
-				line[1].Y += sparse_move;
-			else
-				line[1].X += sparse_move;
-		}
-		line[0].X = min_x;
-		line[0].Y = max_y - sparse_move;
-		line[1].X = min_x + sparse_move;
-		line[1].Y = max_y;
-		while (line[0].X < max_x && line[1].Y > min_y) {
-			o->sparse_infill_pattern.push_back(line);
-			if (line[0].Y <= min_y)
-				line[0].X += sparse_move;
-			else
-				line[0].Y -= sparse_move;
-
-			if (line[1].X >= max_x)
-				line[1].Y -= sparse_move;
-			else
-				line[1].X += sparse_move;
-		}
+static void generate_horizontal_line_fill(const ClipperLib::cInt min_x, const ClipperLib::cInt min_y, const ClipperLib::cInt max_x, const ClipperLib::cInt max_y, ClipperLib::Paths &p, fl_t density)
+{
+	ClipperLib::Path line(2);
+	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width / density);
+	line[0].X = min_x;
+	line[0].Y = min_y;
+	line[1].X = max_x;
+	line[1].Y = min_y;
+	while (line[0].Y < max_y) {
+		p.push_back(line);
+		line[0].Y += move;
+		line[1].Y += move;
 	}
+}
 
+static void generate_vertical_line_fill(const ClipperLib::cInt min_x, const ClipperLib::cInt min_y, const ClipperLib::cInt max_x, const ClipperLib::cInt max_y, ClipperLib::Paths &p, fl_t density)
+{
+	ClipperLib::Path line(2);
+	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width / density);
+	line[0].X = min_x;
+	line[0].Y = min_y;
+	line[1].X = min_x;
+	line[1].Y = max_y;
+	while (line[0].X < max_x) {
+		p.push_back(line);
+		line[0].X += move;
+		line[1].X += move;
+	}
+}
+
+static void generate_infill_patterns(struct object *o)
+{
+	const ClipperLib::cInt min_x = FL_T_TO_CINT(o->c.x - (o->w + config.xy_extra) / 2.0);
+	const ClipperLib::cInt min_y = FL_T_TO_CINT(o->c.y - (o->d + config.xy_extra) / 2.0);
+	const ClipperLib::cInt max_x = FL_T_TO_CINT(o->c.x + (o->w + config.xy_extra) / 2.0);
+	const ClipperLib::cInt max_y = FL_T_TO_CINT(o->c.y + (o->d + config.xy_extra) / 2.0);
+
+	generate_even_line_fill(min_x, min_y, max_x, max_y, o->solid_infill_patterns[0], 1.0);
+	generate_odd_line_fill(min_x, min_y, max_x, max_y, o->solid_infill_patterns[1], 1.0);
+	if (config.infill_density > 0.0) {
+		generate_even_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_pattern, config.infill_density / 2.0);
+		generate_odd_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_pattern, config.infill_density / 2.0);
+	}
 	if (config.generate_support) {
-		const ClipperLib::cInt support_move = FL_T_TO_CINT(config.extrusion_width / config.support_density);
-		line[0].X = min_x;
-		line[0].Y = min_y;
-		line[1].X = max_x;
-		line[1].Y = min_y;
-		while (line[0].Y < max_y) {
-			o->support_pattern.push_back(line);
-			line[0].Y += support_move;
-			line[1].Y += support_move;
-		}
-
-		const ClipperLib::cInt support_interface_move = FL_T_TO_CINT(config.extrusion_width);
-		line[0].X = min_x;
-		line[0].Y = min_y;
-		line[1].X = min_x;
-		line[1].Y = max_y;
-		while (line[0].X < max_x) {
-			o->support_interface_pattern.push_back(line);
-			line[0].X += support_interface_move;
-			line[1].X += support_interface_move;
-		}
+		generate_horizontal_line_fill(min_x, min_y, max_x, max_y, o->support_pattern, config.support_density);
+		generate_vertical_line_fill(min_x, min_y, max_x, max_y, o->support_interface_pattern, 1.0);
 	}
 }
 
