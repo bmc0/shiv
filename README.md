@@ -75,6 +75,7 @@ Option                  | Default value | Description
 `seam_packing_density`  |        `0.95` | Packing density of the ends of each shell (the seam).
 `extra_offset`          |         `0.0` | Offset the object by this distance in the xy plane.
 `infill_density`        |         `0.2` | Sparse infill density.
+`infill_pattern`        |        `grid` | Sparse infill pattern. Legal values are `grid` and `rectilinear`.
 `shells`                |           `2` | Number of loops/perimeters/shells (whatever you want to call them).
 `roof_thickness`        |         `0.8` | Solid surface thickness when looking upwards.
 `floor_thickness`       |         `0.8` | Solid surface thickness when looking downwards.

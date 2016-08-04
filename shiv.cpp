@@ -78,6 +78,11 @@ static const char usage_string[] =
 	"  -y y_translate        translate object in the y-axis\n"
 	"  -z z_chop             sink object into build plate\n";
 
+enum fill_pattern {
+	FILL_PATTERN_GRID,
+	FILL_PATTERN_RECTILINEAR,
+};
+
 /* default config */
 #define DEFAULT_COOL_ON_STR  "M106 S255"
 #define DEFAULT_COOL_OFF_STR "M107"
@@ -99,6 +104,7 @@ static struct {
 	fl_t edge_offset;                      /* Offset of the outer perimeter (calculated) */
 	fl_t shell_clip;                       /* Shells are clipped by this much (calculated from seam_packing_density) */
 	fl_t infill_density        = 0.2;      /* Sparse infill density */
+	fill_pattern infill_pattern = FILL_PATTERN_GRID;  /* Sparse infill pattern */
 	int shells                 = 2;        /* Number of loops/perimeters/shells (whatever you want to call them) */
 	fl_t roof_thickness        = 0.8;      /* Solid surface thickness when looking upwards */
 	int roof_layers;                       /* Calculated from roof_thickness */
@@ -190,7 +196,7 @@ struct object {
 	struct slice *slices;
 
 	ClipperLib::Paths solid_infill_patterns[2];
-	ClipperLib::Paths sparse_infill_pattern;
+	ClipperLib::Paths sparse_infill_patterns[2];
 	ClipperLib::Paths brim;
 	ClipperLib::Paths support_pattern;
 	ClipperLib::Paths support_interface_pattern;
@@ -372,6 +378,14 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "infill_density") == 0) {
 		config.infill_density = atof(value);
 		CHECK_VALUE(config.infill_density >= 0.0 && config.infill_density <= 1.0, "infill density", "within [0, 1]");
+	}
+	else if (strcmp(key, "infill_pattern") == 0) {
+		if (strcmp(value, "grid") == 0)
+			config.infill_pattern = FILL_PATTERN_GRID;
+		else if (strcmp(value, "rectilinear") == 0)
+			config.infill_pattern = FILL_PATTERN_RECTILINEAR;
+		else
+			fprintf(stderr, "error: illegal value for infill_pattern: %s\n", value);
 	}
 	else if (strcmp(key, "shells") == 0) {
 		config.shells = atoi(value);
@@ -1174,8 +1188,17 @@ static void generate_infill_patterns(struct object *o)
 	generate_even_line_fill(min_x, min_y, max_x, max_y, o->solid_infill_patterns[0], 1.0);
 	generate_odd_line_fill(min_x, min_y, max_x, max_y, o->solid_infill_patterns[1], 1.0);
 	if (config.infill_density > 0.0) {
-		generate_even_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_pattern, config.infill_density / 2.0);
-		generate_odd_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_pattern, config.infill_density / 2.0);
+		switch (config.infill_pattern) {
+		case FILL_PATTERN_GRID:
+			generate_even_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[0], config.infill_density / 2.0);
+			generate_odd_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[0], config.infill_density / 2.0);
+			o->sparse_infill_patterns[1] = o->sparse_infill_patterns[0];
+			break;
+		case FILL_PATTERN_RECTILINEAR:
+			generate_even_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[0], config.infill_density);
+			generate_odd_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[1], config.infill_density);
+			break;
+		}
 	}
 	if (config.generate_support) {
 		generate_horizontal_line_fill(min_x, min_y, max_x, max_y, o->support_pattern, config.support_density);
@@ -1261,7 +1284,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			c.Clear();
 			if (config.fill_threshold > 0.0)
 				remove_overlap(s_tmp, s_tmp, config.fill_threshold);
-			c.AddPaths(o->sparse_infill_pattern, ClipperLib::ptSubject, false);
+			c.AddPaths(o->sparse_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
 			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
@@ -1269,7 +1292,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 		else {
 			if (config.fill_threshold > 0.0)
 				remove_overlap(island.infill_insets, s_tmp, config.fill_threshold);
-			c.AddPaths(o->sparse_infill_pattern, ClipperLib::ptSubject, false);
+			c.AddPaths(o->sparse_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
 			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
@@ -2242,6 +2265,15 @@ static const char * get_join_type_string(ClipperLib::JoinType jt)
 	return NULL;
 }
 
+static const char * get_fill_pattern_string(fill_pattern p)
+{
+	switch (p) {
+	case FILL_PATTERN_GRID:        return "grid";
+	case FILL_PATTERN_RECTILINEAR: return "rectilinear";
+	}
+	return NULL;
+}
+
 #define GET_FEED_RATE(x, m) (((x) >= 0.0) ? (x) : (m) * -(x))
 
 int main(int argc, char *argv[])
@@ -2398,6 +2430,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, " *edge_offset           = %f\n", config.edge_offset);
 	fprintf(stderr, " *shell_clip            = %f\n", config.shell_clip);
 	fprintf(stderr, "  infill_density        = %f\n", config.infill_density);
+	fprintf(stderr, "  infill_pattern        = %s\n", get_fill_pattern_string(config.infill_pattern));
 	fprintf(stderr, "  shells                = %d\n", config.shells);
 	fprintf(stderr, "  roof_thickness        = %f\n", config.roof_thickness);
 	fprintf(stderr, " *roof_layers           = %d\n", config.roof_layers);
