@@ -547,14 +547,16 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 			config.poly_fill_type = ClipperLib::pftPositive;
 		else if (strcmp(value, "negative") == 0)
 			config.poly_fill_type = ClipperLib::pftNegative;
+		else
+			fprintf(stderr, "error: illegal value for poly_fill_type: %s\n", value);
 	}
 	else if (strcmp(key, "inset_join_type") == 0) {
 		if (parse_join_type(value, &config.inset_join_type))
-			fprintf(stderr, "error: illegal value for inset_join_type: %s", value);
+			fprintf(stderr, "error: illegal value for inset_join_type: %s\n", value);
 	}
 	else if (strcmp(key, "outset_join_type") == 0) {
 		if (parse_join_type(value, &config.outset_join_type))
-			fprintf(stderr, "error: illegal value for outset_join_type: %s", value);
+			fprintf(stderr, "error: illegal value for outset_join_type: %s\n", value);
 	}
 	else if (strcmp(key, "offset_miter_limit") == 0) {
 		config.offset_miter_limit = atof(value);
