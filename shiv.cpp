@@ -2051,18 +2051,14 @@ static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct is
 	}
 }
 
-static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
+static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num, struct machine *m)
 {
-	struct machine m = {};
-	m.x = FL_T_TO_CINT(o->c.x - (o->w + config.xy_extra) / 2.0);
-	m.y = FL_T_TO_CINT(o->c.y - (o->d + config.xy_extra) / 2.0);
-	m.z = FL_T_TO_CINT(((fl_t) layer_num) * config.layer_height + config.layer_height);
-	m.is_retracted = true;  /* We always retract at the end of a layer */
+	ClipperLib::cInt z = FL_T_TO_CINT(((fl_t) layer_num) * config.layer_height + config.layer_height);
 	if (layer_num == 0 && config.brim_lines > 0)
-		plan_brim(o, &m, m.z);
+		plan_brim(o, m, z);
 	if (config.generate_support) {
-		plan_support(slice, slice->support_interface_lines, &m, m.z, layer_num, config.extrusion_width, (config.connect_support_lines) ? config.extrusion_width * 1.9 : 0.0);
-		plan_support(slice, slice->support_lines, &m, m.z, layer_num, config.extrusion_width * 2.0, (config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0 : 0.0);
+		plan_support(slice, slice->support_interface_lines, m, z, layer_num, config.extrusion_width, (config.connect_support_lines) ? config.extrusion_width * 1.9 : 0.0);
+		plan_support(slice, slice->support_lines, m, z, layer_num, config.extrusion_width * 2.0, (config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0 : 0.0);
 	}
 	while (slice->islands.size() > 0) {
 		size_t best = 0;
@@ -2070,9 +2066,9 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 		for (size_t i = 0; i < slice->islands.size(); ++i) {
 			fl_t dist;
 			if (config.align_seams && config.shells > 0)
-				find_nearest_aligned_path(slice->islands[i].insets[0], m.x, m.y, &dist);
+				find_nearest_aligned_path(slice->islands[i].insets[0], m->x, m->y, &dist);
 			else
-				find_nearest_path((config.shells > 0) ? slice->islands[i].insets[0] : slice->islands[i].infill_insets, m.x, m.y, &dist, NULL);
+				find_nearest_path((config.shells > 0) ? slice->islands[i].insets[0] : slice->islands[i].infill_insets, m->x, m->y, &dist, NULL);
 			if (dist < best_dist) {
 				best = i;
 				best_dist = dist;
@@ -2085,25 +2081,22 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num)
 			island.sparse_infill.clear();
 		}
 		if (config.infill_first && layer_num != 0) {
-			plan_infill(island.solid_infill, slice, &island, &m, m.z);
+			plan_infill(island.solid_infill, slice, &island, m, z);
 			if (config.solid_infill_first)
-				plan_infill(island.sparse_infill, slice, &island, &m, m.z);
-			plan_insets(slice, &island, &m, m.z, config.outside_first || layer_num == 0);
+				plan_infill(island.sparse_infill, slice, &island, m, z);
+			plan_insets(slice, &island, m, z, config.outside_first || layer_num == 0);
 		}
 		else {
-			plan_insets(slice, &island, &m, m.z, config.outside_first || layer_num == 0);
-			plan_infill(island.solid_infill, slice, &island, &m, m.z);
+			plan_insets(slice, &island, m, z, config.outside_first || layer_num == 0);
+			plan_infill(island.solid_infill, slice, &island, m, z);
 			if (config.solid_infill_first)
-				plan_infill(island.sparse_infill, slice, &island, &m, m.z);
+				plan_infill(island.sparse_infill, slice, &island, m, z);
 		}
 		free(island.insets);
 		free(island.inset_gaps);
 		slice->islands.erase(slice->islands.begin() + best);
 	}
-	if (!m.is_retracted) {  /* Retract at the end of each layer */
-		struct g_move retract_move = { m.x, m.y, m.z, -config.retract_len, config.retract_speed, false, false, false };
-		append_g_move(slice, retract_move, config.retract_len);
-	}
+	m->force_retract = true;  /* force retract on layer change */
 }
 
 static void write_gcode_string(const char *s, FILE *f)
@@ -2181,14 +2174,6 @@ static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl
 
 static int write_gcode(const char *path, struct object *o)
 {
-	fputs("plan moves...", stderr);
-#ifdef _OPENMP
-	#pragma omp parallel for schedule(dynamic)
-#endif
-	for (ssize_t i = 0; i < o->n_slices; ++i)
-		plan_moves(o, &o->slices[i], i);
-	fputs(" done\n", stderr);
-
 	FILE *f;
 	if (strcmp(path, "-") == 0)
 		f = stdout;
@@ -2196,14 +2181,19 @@ static int write_gcode(const char *path, struct object *o)
 		f = fopen(path, "w");
 	if (!f)
 		return 1;
+	struct machine plan_m = {};
+	plan_m.x = FL_T_TO_CINT(o->c.x - (o->w + config.xy_extra) / 2.0);
+	plan_m.y = FL_T_TO_CINT(o->c.y - (o->d + config.xy_extra) / 2.0);
+	plan_m.is_retracted = true;
 	bool is_first_move = true;
-	struct machine m = {};
+	struct machine export_m = {};
 	fl_t total_e = 0.0;
 	fl_t feed_rate_mult = config.first_layer_mult;
-	fprintf(stderr, "write gcode to %s...", path);
+	fprintf(stderr, "plan moves and write gcode to %s...", path);
 	write_gcode_string(config.start_gcode, f);
 	for (ssize_t i = 0; i < o->n_slices; ++i) {
 		struct slice *slice = &o->slices[i];
+		plan_moves(o, slice, i, &plan_m);
 		fprintf(f, "; layer %zd (z = %f)\n", i, ((fl_t) i) * config.layer_height + config.layer_height);
 		if (i == config.cool_layer)
 			write_gcode_string(config.cool_on_gcode, f);
@@ -2214,13 +2204,13 @@ static int write_gcode(const char *path, struct object *o)
 		if (average_layer_time < config.min_layer_time)
 			feed_rate_mult = average_layer_time / config.min_layer_time;
 		for (struct g_move &move : o->slices[i].moves) {
-			write_gcode_move(f, &move, &m, feed_rate_mult, is_first_move);
+			write_gcode_move(f, &move, &export_m, feed_rate_mult, is_first_move);
 			is_first_move = false;
 		}
 		slice->moves.clear();
 		feed_rate_mult = 1.0;
-		total_e += m.e;
-		m.e = 0.0;
+		total_e += export_m.e;
+		export_m.e = 0.0;
 		fputs("G92 E0\n", f);
 	}
 	write_gcode_string(config.cool_off_gcode, f);
