@@ -1038,7 +1038,7 @@ static void generate_insets(struct slice *slice)
 			/* The offset distance here is not *technically* correct, but I'm not sure one can expect high dimensional accuracy when only printing infill anyway... */
 			do_offset(island.outlines, island.infill_insets, config.edge_offset + config.extra_offset, 0.0);
 		}
-		ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST * 4.0);
+		ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST);
 
 		done:
 		do_offset((config.shells > 0) ? island.insets[0] : island.infill_insets, island.boundaries, config.extrusion_width / 8.0, 0.0);
