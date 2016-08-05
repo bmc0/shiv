@@ -158,7 +158,7 @@ static struct {
 	ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	ClipperLib::JoinType inset_join_type    = ClipperLib::jtMiter;     /* Join type for negative offsets */
 	ClipperLib::JoinType outset_join_type   = ClipperLib::jtMiter;     /* Join type for positive offsets */
-	fl_t offset_miter_limit    = 5.0;
+	fl_t offset_miter_limit    = 2.0;
 	fl_t offset_arc_tolerance  = 5.0;
 	fl_t fill_threshold        = 0.5;      /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
 	fl_t support_angle         = 70.0;     /* Angle threshold for support */
