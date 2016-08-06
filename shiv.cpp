@@ -128,10 +128,12 @@ static struct {
 	fl_t coast_len             = 0.0;      /* Length to coast (move with the extruder turned off) at the end of a shell */
 	fl_t retract_len           = 1.0;
 	fl_t retract_speed         = 20.0;
+	fl_t moving_retract_speed  = -0.5;     /* Retrect speed when doing non-stationary retracts. If set to a value slightly lower than the E-axis jerk, the toolhead should not slow down while doing the retract. A negative value means a multiple of 'retract_speed'. */
 	fl_t restart_speed         = -1.0;     /* A negative value means a multiple of 'retract_speed' */
 	fl_t retract_min_travel    = 10.0;     /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold     = 30.0;     /* Unconditional retraction threshold */
 	bool retract_within_island = false;
+	bool moving_retract        = false;    /* Do a non-stationary retraction at the end of each shell */
 	fl_t extra_restart_len     = 0.0;      /* Extra material length on restart */
 	int cool_layer             = 1;        /* Turn on part cooling at this layer */
 	char *start_gcode          = NULL;
@@ -450,6 +452,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 		config.retract_speed = atof(value);
 		CHECK_VALUE(config.retract_speed > 0.0, "retract speed", "> 0");
 	}
+	else if (strcmp(key, "moving_retract_speed") == 0) {
+		config.moving_retract_speed = atof(value);
+	}
 	else if (strcmp(key, "restart_speed") == 0) {
 		config.restart_speed = atof(value);
 	}
@@ -463,6 +468,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "retract_within_island") == 0) {
 		config.retract_within_island = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "moving_retract") == 0) {
+		config.moving_retract = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "extra_restart_len") == 0) {
 		config.extra_restart_len = atof(value);
@@ -1892,6 +1900,38 @@ static void clip_path_from_end(ClipperLib::Path &p, ClipperLib::Path *clipped_po
 		std::reverse(clipped_points->begin(), clipped_points->end());
 }
 
+/* Do a non-stationary retract at the end of a shell */
+static void moving_retract(ClipperLib::Path &p, struct slice *slice, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
+{
+	fl_t len_ratio = config.moving_retract_speed / feed_rate;
+	fl_t move_len = config.retract_len / len_ratio;
+	fl_t x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y), l = 0.0, rl = 0.0;
+	for (size_t i = 0;; ++i) {
+		if (i >= p.size())
+			i = 0;
+		fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
+		fl_t xv = x1 - x0, yv = y1 - y0;
+		fl_t norm = sqrt(xv * xv + yv * yv);
+		l += norm;
+		if (rl + norm * len_ratio >= config.retract_len) {
+			fl_t new_x = x1 - (l - move_len) * (xv / norm), new_y = y1 - (l - move_len) * (yv / norm);
+			struct g_move move = { FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y), z, -(config.retract_len - rl), feed_rate, false, false, false };
+			append_g_move(slice, move, move_len - (l - norm));
+			m->x = move.x;
+			m->y = move.y;
+			m->z = move.z;
+			break;
+		}
+		else if (norm > 0.0) {
+			struct g_move move = { p[i].X, p[i].Y, z, -norm * len_ratio, feed_rate, false, false, false };
+			append_g_move(slice, move, norm);
+			/* No need to update m->{x,y,z} */
+		}
+		rl += norm * len_ratio;
+	}
+	m->is_retracted = true;
+}
+
 static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
 {
 	if (p.size() < 3)
@@ -1919,6 +1959,8 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 	for (ClipperLib::IntPoint &point : coast_path)
 		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true ,false);
 	m->is_retracted = false;
+	if (config.moving_retract)
+		moving_retract(p, slice, m, z, feed_rate);
 }
 
 static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
@@ -2411,6 +2453,7 @@ int main(int argc, char *argv[])
 	config.infill_feed_rate = GET_FEED_RATE(config.infill_feed_rate, config.feed_rate);
 	config.support_feed_rate = GET_FEED_RATE(config.support_feed_rate, config.feed_rate);
 	config.travel_feed_rate = GET_FEED_RATE(config.travel_feed_rate, config.feed_rate);
+	config.moving_retract_speed = GET_FEED_RATE(config.moving_retract_speed, config.retract_speed);
 	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);
 
 	fprintf(stderr, "configuration:\n");
@@ -2452,10 +2495,12 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  coast_len             = %f\n", config.coast_len);
 	fprintf(stderr, "  retract_len           = %f\n", config.retract_len);
 	fprintf(stderr, "  retract_speed         = %f\n", config.retract_speed);
+	fprintf(stderr, "  moving_retract_speed  = %f\n", config.moving_retract_speed);
 	fprintf(stderr, "  restart_speed         = %f\n", config.restart_speed);
 	fprintf(stderr, "  retract_min_travel    = %f\n", config.retract_min_travel);
 	fprintf(stderr, "  retract_threshold     = %f\n", config.retract_threshold);
 	fprintf(stderr, "  retract_within_island = %s\n", (config.retract_within_island) ? "true" : "false");
+	fprintf(stderr, "  moving_retract        = %s\n", (config.moving_retract) ? "true" : "false");
 	fprintf(stderr, "  extra_restart_len     = %f\n", config.extra_restart_len);
 	fprintf(stderr, "  cool_layer            = %d\n", config.cool_layer);
 	fprintf(stderr, "  temp                  = %f\n", config.temp);
