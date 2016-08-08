@@ -1939,15 +1939,16 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 	bool first_point = true;
 	bool do_clip = (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * 4.0));
 	bool do_coast = (config.coast_len > 0.0 && path_len_is_greater_than(p, config.coast_len * 2.0 + ((do_clip) ? config.shell_clip : 0.0)));
+	ClipperLib::Path lp = p;
 	if (start_idx != 0)
-		std::rotate(p.begin(), p.begin() + start_idx, p.end());
-	p.push_back(p[0]);
+		std::rotate(lp.begin(), lp.begin() + start_idx, lp.end());
+	lp.push_back(lp[0]);
 	if (do_clip)
-		clip_path_from_end(p, NULL, config.shell_clip);
+		clip_path_from_end(lp, NULL, config.shell_clip);
 	ClipperLib::Path coast_path;
 	if (do_coast)
-		clip_path_from_end(p, &coast_path, config.coast_len);
-	for (ClipperLib::IntPoint &point : p) {
+		clip_path_from_end(lp, &coast_path, config.coast_len);
+	for (ClipperLib::IntPoint &point : lp) {
 		if (first_point) {
 			linear_move(slice, island, m, point.X, point.Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false);
 			first_point = false;
