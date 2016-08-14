@@ -2268,6 +2268,11 @@ static int write_gcode(const char *path, struct object *o)
 		export_m.e = 0.0;
 		fputs("G92 E0\n", f);
 	}
+	if (!plan_m.is_retracted && config.retract_len > 0.0) {
+		/* Do retract after last layer */
+		struct g_move retract_move = { export_m.x, export_m.y, export_m.z, -config.retract_len, config.retract_speed, false, false, false };
+		write_gcode_move(f, &retract_move, &export_m, feed_rate_mult, false);
+	}
 	write_gcode_string(config.cool_off_gcode, f);
 	write_gcode_string(config.end_gcode, f);
 	fputs(" done\n", stderr);
