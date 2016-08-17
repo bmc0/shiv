@@ -2112,8 +2112,8 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 	if (layer_num == 0 && config.brim_lines > 0)
 		plan_brim(o, m, z);
 	if (config.generate_support) {
-		plan_support(slice, slice->support_interface_lines, m, z, layer_num, config.extrusion_width, (config.connect_support_lines) ? config.extrusion_width * 1.9 : 0.0);
-		plan_support(slice, slice->support_lines, m, z, layer_num, config.extrusion_width * 2.0, (config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0 : 0.0);
+		plan_support(slice, slice->support_interface_lines, m, z, layer_num, config.extrusion_width, (layer_num == 0 || config.connect_support_lines) ? config.extrusion_width * 1.9 : 0.0);
+		plan_support(slice, slice->support_lines, m, z, layer_num, config.extrusion_width * 2.0, (layer_num == 0 || config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0 : 0.0);
 	}
 	while (slice->islands.size() > 0) {
 		size_t best = 0;
