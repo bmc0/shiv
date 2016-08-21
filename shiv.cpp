@@ -149,6 +149,7 @@ static struct {
 	bool clean_insets          = true;     /* Do ClipperLib::CleanPolygon operation on all insets (only the initial outline is cleaned if this is false) */
 	bool fill_inset_gaps       = true;     /* Fill gaps between shells */
 	bool no_solid              = false;    /* If true, only generate solid fill on the very top and bottom of the model */
+	bool anchor                = false;    /* Clip and anchor inset paths */
 	bool outside_first         = false;    /* Prefer exterior shells */
 	bool solid_infill_first    = false;    /* Print solid infill before sparse infill */
 	bool separate_z_travel     = false;    /* Generate a separate z travel move instead of moving all axes together */
@@ -521,6 +522,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "no_solid") == 0) {
 		config.no_solid = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "anchor") == 0) {
+		config.anchor = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "outside_first") == 0) {
 		config.outside_first = PARSE_BOOL(value);
@@ -1936,15 +1940,21 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 {
 	if (p.size() < 3)
 		return;
-	bool first_point = true;
-	bool do_clip = (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * 4.0));
-	bool do_coast = (config.coast_len > 0.0 && path_len_is_greater_than(p, config.coast_len * 2.0 + ((do_clip) ? config.shell_clip : 0.0)));
+	fl_t total_clip = 0.0;
+	bool first_point = true, do_anchor = false;
+	if (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * 2.0))
+		total_clip += config.shell_clip;
+	if (config.anchor && path_len_is_greater_than(p, total_clip + config.extrusion_width * 2.0)) {
+		do_anchor = true;
+		total_clip += config.extrusion_width / 2.0;
+	}
+	bool do_coast = (config.coast_len > 0.0 && path_len_is_greater_than(p, total_clip + config.coast_len * 2.0));
 	ClipperLib::Path lp = p;
 	if (start_idx != 0)
 		std::rotate(lp.begin(), lp.begin() + start_idx, lp.end());
 	lp.push_back(lp[0]);
-	if (do_clip)
-		clip_path_from_end(lp, NULL, config.shell_clip);
+	if (total_clip > 0.0)
+		clip_path_from_end(lp, NULL, total_clip);
 	ClipperLib::Path coast_path;
 	if (do_coast)
 		clip_path_from_end(lp, &coast_path, config.coast_len);
@@ -1953,12 +1963,18 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 			linear_move(slice, island, m, point.X, point.Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false);
 			first_point = false;
 		}
-		else
-			linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, false, false);
+		else {
+			fl_t anchor_e_len = 0.0;
+			if (do_anchor) {
+				anchor_e_len = config.extrusion_width / 2.0 * config.extrusion_area * config.flow_multiplier / config.material_area;
+				do_anchor = false;
+			}
+			linear_move(slice, island, m, point.X, point.Y, z, anchor_e_len, feed_rate, 1.0, true, false, false);
+		}
 	}
 	m->is_retracted = true;  /* Make sure we don't retract */
 	for (ClipperLib::IntPoint &point : coast_path)
-		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true ,false);
+		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true, false);
 	m->is_retracted = false;
 	if (config.moving_retract)
 		moving_retract(p, slice, m, z, feed_rate);
@@ -2518,6 +2534,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  clean_insets          = %s\n", (config.clean_insets) ? "true" : "false");
 	fprintf(stderr, "  fill_inset_gaps       = %s\n", (config.fill_inset_gaps) ? "true" : "false");
 	fprintf(stderr, "  no_solid              = %s\n", (config.no_solid) ? "true" : "false");
+	fprintf(stderr, "  anchor                = %s\n", (config.anchor) ? "true" : "false");
 	fprintf(stderr, "  outside_first         = %s\n", (config.outside_first) ? "true" : "false");
 	fprintf(stderr, "  solid_infill_first    = %s\n", (config.solid_infill_first) ? "true" : "false");
 	fprintf(stderr, "  separate_z_travel     = %s\n", (config.separate_z_travel) ? "true" : "false");

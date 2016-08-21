@@ -114,6 +114,7 @@ Option                  | Default value | Description
 `clean_insets`          |        `true` | Do `ClipperLib::CleanPolygon()` on all insets (only the initial outline is cleaned if this is false).
 `fill_inset_gaps`       |        `true` | Fill gaps between shells.
 `no_solid`              |       `false` | If true, only generate solid fill on the very top and bottom of the model.
+`anchor`                |       `false` | Clip and anchor inset paths.
 `outside_first`         |       `false` | Prefer exterior shells.
 `solid_infill_first`    |       `false` | Print solid infill before sparse infill.
 `separate_z_travel`     |       `false` | Generate a separate z travel move instead of moving all axes together.
