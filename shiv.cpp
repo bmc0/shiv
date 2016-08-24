@@ -2081,7 +2081,7 @@ static void plan_insets_strict_order(struct slice *slice, struct island *island,
 	int i = (outside_first) ? 0 : config.shells - 1;
 	while (i >= 0 && i < config.shells) {
 		if (island->insets[i].empty()) {
-			i = (outside_first) ? i + i : i - 1;
+			i = (outside_first) ? i + 1 : i - 1;
 			continue;
 		}
 		size_t best, start = 0;
