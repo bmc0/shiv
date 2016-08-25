@@ -42,6 +42,7 @@ typedef double fl_t;
 #define CINT_TO_FL_T(x) (((fl_t) (x)) / SCALE_CONSTANT)
 #define FL_T_TO_INTPOINT(x, y)  ClipperLib::IntPoint(FL_T_TO_CINT(x), FL_T_TO_CINT(y))
 #define INTPOINT_TO_FL_T(point) CINT_TO_FL_T((point).X), CINT_TO_FL_T((point).Y)
+#define FREE_VECTOR(v) decltype(v)().swap(v)  /* Force memory used by vector to be freed */
 
 #if SHIV_DEBUG
 #define DEBUG(...) fprintf(stderr, "DEBUG: " __VA_ARGS__)
@@ -2157,7 +2158,6 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		if (!config.solid_infill_first) {
 			/* Concat sparse infill into solid infill vector so the infill pathing is planned together */
 			island.solid_infill.insert(island.solid_infill.end(), island.sparse_infill.begin(), island.sparse_infill.end());
-			island.sparse_infill.clear();
 		}
 		if (config.infill_first && layer_num != 0) {
 			plan_infill(island.solid_infill, slice, &island, m, z);
@@ -2282,11 +2282,11 @@ static int write_gcode(const char *path, struct object *o)
 		average_layer_time /= config.layer_time_samples;
 		if (average_layer_time < config.min_layer_time)
 			feed_rate_mult = average_layer_time / config.min_layer_time;
-		for (struct g_move &move : o->slices[i].moves) {
+		for (struct g_move &move : slice->moves) {
 			write_gcode_move(f, &move, &export_m, feed_rate_mult, is_first_move);
 			is_first_move = false;
 		}
-		slice->moves.clear();
+		FREE_VECTOR(slice->moves);
 		feed_rate_mult = 1.0;
 		total_e += export_m.e;
 		export_m.e = 0.0;
