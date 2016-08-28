@@ -1913,13 +1913,13 @@ static void clip_path_from_end(ClipperLib::Path &p, ClipperLib::Path *clipped_po
 		std::reverse(clipped_points->begin(), clipped_points->end());
 }
 
-/* Do a non-stationary retract at the end of a shell */
-static void moving_retract(ClipperLib::Path &p, struct slice *slice, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
+/* Do a non-stationary retract at the end of a shell. Expects a standard closed path where the first point is also the end point (in other words, no repeated points). */
+static void moving_retract(ClipperLib::Path &p, struct slice *slice, struct machine *m, ClipperLib::cInt z, size_t start_idx, fl_t feed_rate)
 {
 	fl_t len_ratio = config.moving_retract_speed / feed_rate;
 	fl_t move_len = config.retract_len / len_ratio;
 	fl_t x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y), l = 0.0, rl = 0.0;
-	for (size_t i = 0;; ++i) {
+	for (size_t i = start_idx;; ++i) {
 		if (i >= p.size())
 			i = 0;
 		fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
@@ -1986,7 +1986,7 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true, false);
 	m->is_retracted = false;
 	if (config.moving_retract)
-		moving_retract(p, slice, m, z, feed_rate);
+		moving_retract(p, slice, m, z, start_idx, feed_rate);
 }
 
 static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
