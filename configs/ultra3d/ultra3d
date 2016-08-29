@@ -1,7 +1,7 @@
 ### Powerspec Ultra3D
 extrusion_width=0.4
 flow_multiplier=1.02
-coarseness=4
+coarseness=0.004
 feed_rate=40
 perimeter_feed_rate=-0.6
 loop_feed_rate=-1.0
