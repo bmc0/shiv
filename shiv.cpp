@@ -244,7 +244,7 @@ struct slice {
 	struct segment *s;
 	std::vector<struct island> islands;
 	std::vector<struct g_move> moves;
-	ClipperLib::Paths layer_support_map;
+	ClipperLib::PolyTree layer_support_map;
 	ClipperLib::Paths support_map;
 	ClipperLib::Paths support_boundaries;
 	ClipperLib::Paths support_lines;
@@ -1350,9 +1350,9 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 	for (struct island &island : o->slices[slice_index].islands)
 		c.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, ClipperLib::ptSubject, true);
 	c.AddPaths(clip_paths, ClipperLib::ptClip, true);
-	c.Execute(ClipperLib::ctDifference, o->slices[slice_index].layer_support_map, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+	c.Execute(ClipperLib::ctDifference, clip_paths, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 	c.Clear();
-	co.AddPaths(o->slices[slice_index].layer_support_map, ClipperLib::jtSquare, ClipperLib::etClosedPolygon);
+	co.AddPaths(clip_paths, ClipperLib::jtSquare, ClipperLib::etClosedPolygon);
 	co.Execute(o->slices[slice_index].layer_support_map, FL_T_TO_CINT(config.support_xy_expansion + (0.5 + config.support_margin) * config.edge_width - config.edge_offset));
 }
 
@@ -1364,28 +1364,43 @@ static void generate_support_boundaries(struct slice *slice)
 	co.Execute(slice->support_boundaries, FL_T_TO_CINT((0.5 + config.support_margin) * config.edge_width - config.edge_offset));
 }
 
-static void generate_support_maps(struct object *o, ssize_t slice_index)
+static void extend_support_downward(struct object *o, ClipperLib::PolyNode *n, ssize_t slice_index)
 {
-	for (ClipperLib::Path &p : o->slices[slice_index].layer_support_map) {
-		for (ssize_t k = slice_index; k >= 0; --k) {
-			ClipperLib::Clipper c;
-			ClipperLib::Paths tmp;
-			c.AddPath(p, ClipperLib::ptSubject, true);
-			for (int i = (k >= config.support_vert_margin) ? -config.support_vert_margin : -k; k + i <= slice_index && i <= config.support_vert_margin; ++i)
-				c.AddPaths(o->slices[k + i].support_boundaries, ClipperLib::ptClip, true);
-			c.Execute(ClipperLib::ctDifference, tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-			if (tmp.size() >= 1) {
-			#ifdef _OPENMP
-				omp_set_lock(&o->slices[k].lock);
-			#endif
-				o->slices[k].support_map.insert(o->slices[k].support_map.end(), tmp.begin(), tmp.end());
-			#ifdef _OPENMP
-				omp_unset_lock(&o->slices[k].lock);
-			#endif
-			}
-			else
-				break;
+	ssize_t k;
+	ClipperLib::Paths p;
+	p.push_back(n->Contour);
+	for (ClipperLib::PolyNode *c : n->Childs)
+		p.push_back(c->Contour);
+	ClipperLib::Paths *clipped_paths = new ClipperLib::Paths[slice_index + 1];
+	for (k = slice_index; k >= 0; --k) {
+		ClipperLib::Clipper c;
+		c.AddPaths(p, ClipperLib::ptSubject, true);
+		for (ssize_t i = (k >= config.support_vert_margin) ? -config.support_vert_margin : -k; k + i <= slice_index && i <= config.support_vert_margin; ++i)
+			c.AddPaths(o->slices[k + i].support_boundaries, ClipperLib::ptClip, true);
+		c.Execute(ClipperLib::ctDifference, clipped_paths[k], ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		if (clipped_paths[k].size() == 0)
+			break;
+	}
+	if (config.support_everywhere || k == -1) {
+		for (++k; k <= slice_index; ++k) {
+		#ifdef _OPENMP
+			omp_set_lock(&o->slices[k].lock);
+		#endif
+			o->slices[k].support_map.insert(o->slices[k].support_map.end(), clipped_paths[k].begin(), clipped_paths[k].end());
+		#ifdef _OPENMP
+			omp_unset_lock(&o->slices[k].lock);
+		#endif
 		}
+	}
+	delete[] clipped_paths;
+}
+
+static void generate_support_maps(struct object *o, ClipperLib::PolyNode *n, ssize_t slice_index)
+{
+	for (ClipperLib::PolyNode *c : n->Childs) {
+		extend_support_downward(o, c, slice_index);
+		for (ClipperLib::PolyNode *cc : c->Childs)
+			generate_support_maps(o, cc, slice_index);
 	}
 }
 
@@ -1396,9 +1411,12 @@ static void union_support_maps(struct slice *slice)
 
 static void remove_supports_not_touching_build_plate(struct object *o)
 {
+	if (o->n_slices < 1)
+		return;
 	ClipperLib::Clipper c;
 	ClipperLib::Paths clip_paths;
-	for (ssize_t i = 0; i < o->n_slices; ++i) {
+	clip_paths.insert(clip_paths.end(), o->slices[0].support_boundaries.begin(), o->slices[0].support_boundaries.end());
+	for (ssize_t i = 1; i < o->n_slices; ++i) {
 		clip_paths.insert(clip_paths.end(), o->slices[i].support_boundaries.begin(), o->slices[i].support_boundaries.end());
 		ClipperLib::SimplifyPolygons(clip_paths, ClipperLib::pftNonZero);
 		c.AddPaths(o->slices[i].support_map, ClipperLib::ptSubject, true);
@@ -1537,7 +1555,7 @@ static void slice_object(struct object *o)
 		#pragma omp parallel for schedule(dynamic)
 	#endif
 		for (i = 0; i < o->n_slices; ++i)
-			generate_support_maps(o, i);
+			generate_support_maps(o, &o->slices[i].layer_support_map, i);
 	#ifdef _OPENMP
 		#pragma omp parallel for schedule(dynamic)
 	#endif
