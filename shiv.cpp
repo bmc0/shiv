@@ -87,101 +87,102 @@ enum fill_pattern {
 #define DEFAULT_COOL_ON_STR  "M106 S255"
 #define DEFAULT_COOL_OFF_STR "M107"
 static struct {
-	fl_t layer_height          = 0.2;
-	fl_t tolerance             = 0.001;      /* Segment connection tolerance */
-	fl_t scale_constant        = 1000000.0;  /* Clipper uses integers, so we need to scale floating point values. Precision is 1/scale_constant units. Coordinates in the range `±4.6e+18/scale_constant` are accepted. */
-	fl_t coarseness            = 0.005;      /* Approximate output coarseness. Useful for simplifying high polygon count meshes. */
-	fl_t extrusion_width       = 0.4;        /* Constrained (solid infill) extrusion width */
-	fl_t edge_width;                         /* Unconstrained (edge) extrusion width (calculated from extrusion_width) */
-	fl_t extrusion_area;                     /* Cross-sectional area of an extrusion */
-	fl_t xy_scale_factor       = 1.003;      /* Scale object in x and y axis by this ratio to compensate for shrinkage */
-	fl_t z_scale_factor        = 1.0;        /* Scale object in z axis by this ratio to compensate for shrinkage */
-	fl_t x_center              = 0.0;
-	fl_t y_center              = 0.0;
-	fl_t packing_density       = 0.98;       /* Solid packing density (should be slightly less than 1; 0.98 seems to work well for PLA) */
-	fl_t edge_packing_density  = 0.95;       /* Packing density of the contranied half of the outer perimeter */
-	fl_t seam_packing_density  = 0.95;       /* Packing density of the ends of each shell (the seam) */
-	fl_t extra_offset          = 0.0;        /* Offset the object by this distance in the xy plane */
-	fl_t edge_offset;                        /* Offset of the outer perimeter (calculated) */
-	fl_t shell_clip;                         /* Shells are clipped by this much (calculated from seam_packing_density) */
-	fl_t infill_density        = 0.2;        /* Sparse infill density */
-	fill_pattern infill_pattern = FILL_PATTERN_GRID;  /* Sparse infill pattern */
-	int shells                 = 2;          /* Number of loops/perimeters/shells (whatever you want to call them) */
-	fl_t roof_thickness        = 0.8;        /* Solid surface thickness when looking upwards */
-	int roof_layers;                         /* Calculated from roof_thickness */
-	fl_t floor_thickness       = 0.8;        /* Solid surface thickness when looking downwards */
-	int floor_layers;                        /* Calculated from floor_thickness */
-	fl_t min_shell_contact     = 1.0;        /* Minimum contact patch through roof and floor layers in units of extrusion_width. Small values (~0.1 to 1.0) will reduce print time compared to larger values, but may produce weaker parts. */
+	fl_t layer_height            = 0.2;
+	fl_t tolerance               = 0.001;      /* Segment connection tolerance */
+	fl_t scale_constant          = 1000000.0;  /* Clipper uses integers, so we need to scale floating point values. Precision is 1/scale_constant units. Coordinates in the range `±4.6e+18/scale_constant` are accepted. */
+	fl_t coarseness              = 0.005;      /* Approximate output coarseness. Useful for simplifying high polygon count meshes. */
+	fl_t extrusion_width         = 0.4;        /* Constrained (solid infill) extrusion width */
+	fl_t edge_width;                           /* Unconstrained (edge) extrusion width (calculated from extrusion_width) */
+	fl_t extrusion_area;                       /* Cross-sectional area of an extrusion */
+	fl_t xy_scale_factor         = 1.003;      /* Scale object in x and y axis by this ratio to compensate for shrinkage */
+	fl_t z_scale_factor          = 1.0;        /* Scale object in z axis by this ratio to compensate for shrinkage */
+	fl_t x_center                = 0.0;
+	fl_t y_center                = 0.0;
+	fl_t packing_density         = 0.98;       /* Solid packing density (should be slightly less than 1; 0.98 seems to work well for PLA) */
+	fl_t edge_packing_density    = 0.95;       /* Packing density of the contranied half of the outer perimeter */
+	fl_t seam_packing_density    = 0.95;       /* Packing density of the ends of each shell (the seam) */
+	fl_t extra_offset            = 0.0;        /* Offset the object by this distance in the xy plane */
+	fl_t edge_offset;                          /* Offset of the outer perimeter (calculated) */
+	fl_t shell_clip;                           /* Shells are clipped by this much (calculated from seam_packing_density) */
+	fl_t infill_density          = 0.2;        /* Sparse infill density */
+	fill_pattern infill_pattern  = FILL_PATTERN_GRID;  /* Sparse infill pattern */
+	int shells                   = 2;          /* Number of loops/perimeters/shells (whatever you want to call them) */
+	fl_t roof_thickness          = 0.8;        /* Solid surface thickness when looking upwards */
+	int roof_layers;                           /* Calculated from roof_thickness */
+	fl_t floor_thickness         = 0.8;        /* Solid surface thickness when looking downwards */
+	int floor_layers;                          /* Calculated from floor_thickness */
+	fl_t min_shell_contact       = 1.0;        /* Minimum contact patch through roof and floor layers in units of extrusion_width. Small values (~0.1 to 1.0) will reduce print time compared to larger values, but may produce weaker parts. */
 	fl_t solid_infill_clip_offset;
-	fl_t solid_fill_expansion  = 1.0;        /* Distance to expand solid infill, in units of extrusion_width */
-	fl_t material_diameter     = 1.75;       /* Diameter of material */
-	fl_t material_area;                      /* Cross-sectional area of filament (calculated from material_diameter) */
-	fl_t flow_multiplier       = 1.0;        /* Flow rate adjustment */
-	fl_t feed_rate             = 50.0;       /* Base feed rate */
+	fl_t solid_fill_expansion    = 1.0;        /* Distance to expand solid infill, in units of extrusion_width */
+	fl_t material_diameter       = 1.75;       /* Diameter of material */
+	fl_t material_area;                        /* Cross-sectional area of filament (calculated from material_diameter) */
+	fl_t flow_multiplier         = 1.0;        /* Flow rate adjustment */
+	fl_t feed_rate               = 50.0;       /* Base feed rate */
 	/* Feed rates below are actual speeds if set to a positive value, or a multiple of 'feed_rate' if set to a negative value.
 	   In other words, '40' is 40 units/s, but '-0.5' is feed_rate * 0.5 units/s. */
-	fl_t perimeter_feed_rate   = -0.5;       /* Outer shell feed rate */
-	fl_t loop_feed_rate        = -1.0;       /* Inner shell feed rate */
-	fl_t infill_feed_rate      = -1.0;
-	fl_t support_feed_rate     = -1.0;
-	fl_t travel_feed_rate      = 120.0;
-	fl_t first_layer_mult      = 0.5;        /* First layer feed rates (except travel) are multiplied by this value */
-	fl_t coast_len             = 0.0;        /* Length to coast (move with the extruder turned off) at the end of a shell */
-	fl_t retract_len           = 1.0;
-	fl_t retract_speed         = 20.0;
-	fl_t moving_retract_speed  = -0.5;       /* Retrect speed when doing non-stationary retracts. If set to a value slightly lower than the E-axis jerk, the toolhead should not slow down while doing the retract. A negative value means a multiple of 'retract_speed'. */
-	fl_t restart_speed         = -1.0;       /* A negative value means a multiple of 'retract_speed' */
-	fl_t retract_min_travel    = 10.0;       /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
-	fl_t retract_threshold     = 30.0;       /* Unconditional retraction threshold */
-	bool retract_within_island = false;
-	bool moving_retract        = false;      /* Do a non-stationary retraction at the end of each shell */
-	fl_t extra_restart_len     = 0.0;        /* Extra material length on restart */
-	int cool_layer             = 1;          /* Turn on part cooling at this layer */
-	char *start_gcode          = NULL;
-	char *end_gcode            = NULL;
-	char *cool_on_gcode        = NULL;       /* Set in main() */
-	char *cool_off_gcode       = NULL;       /* Set in main() */
-	fl_t temp                  = 220.0;      /* Hotend temperature */
-	fl_t bed_temp              = 65.0;
-	fl_t edge_overlap          = 0.5;        /* Allowable edge path overlap in units of extrusion_width */
-	bool strict_shell_order    = false;      /* Always do insets in order within an island */
-	bool infill_first          = false;      /* Do infill before shells */
-	bool align_seams           = true;       /* Align seams to the lower left corner */
-	bool clean_insets          = true;       /* Do ClipperLib::CleanPolygon operation on all insets (only the initial outline is cleaned if this is false) */
-	bool fill_inset_gaps       = true;       /* Fill gaps between shells */
-	bool no_solid              = false;      /* If true, only generate solid fill on the very top and bottom of the model */
-	bool anchor                = false;      /* Clip and anchor inset paths */
-	bool outside_first         = false;      /* Prefer exterior shells */
-	bool solid_infill_first    = false;      /* Print solid infill before sparse infill */
-	bool separate_z_travel     = false;      /* Generate a separate z travel move instead of moving all axes together */
-	bool combine_all           = false;      /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
-	bool generate_support      = false;      /* Generate support structure */
-	bool support_everywhere    = false;      /* False means only touching build plate */
-	bool solid_support_base    = false;      /* Make supports solid at layer 0 */
-	bool connect_support_lines = false;      /* Connect support lines together. Makes the support structure more robust, but harder to remove. */
+	fl_t perimeter_feed_rate     = -0.5;       /* Outer shell feed rate */
+	fl_t loop_feed_rate          = -1.0;       /* Inner shell feed rate */
+	fl_t solid_infill_feed_rate  = -1.0;
+	fl_t sparse_infill_feed_rate = -1.0;
+	fl_t support_feed_rate       = -1.0;
+	fl_t travel_feed_rate        = 120.0;
+	fl_t first_layer_mult        = 0.5;        /* First layer feed rates (except travel) are multiplied by this value */
+	fl_t coast_len               = 0.0;        /* Length to coast (move with the extruder turned off) at the end of a shell */
+	fl_t retract_len             = 1.0;
+	fl_t retract_speed           = 20.0;
+	fl_t moving_retract_speed    = -0.5;       /* Retrect speed when doing non-stationary retracts. If set to a value slightly lower than the E-axis jerk, the toolhead should not slow down while doing the retract. A negative value means a multiple of 'retract_speed'. */
+	fl_t restart_speed           = -1.0;       /* A negative value means a multiple of 'retract_speed' */
+	fl_t retract_min_travel      = 10.0;       /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
+	fl_t retract_threshold       = 30.0;       /* Unconditional retraction threshold */
+	bool retract_within_island   = false;
+	bool moving_retract          = false;      /* Do a non-stationary retraction at the end of each shell */
+	fl_t extra_restart_len       = 0.0;        /* Extra material length on restart */
+	int cool_layer               = 1;          /* Turn on part cooling at this layer */
+	char *start_gcode            = NULL;
+	char *end_gcode              = NULL;
+	char *cool_on_gcode          = NULL;       /* Set in main() */
+	char *cool_off_gcode         = NULL;       /* Set in main() */
+	fl_t temp                    = 220.0;      /* Hotend temperature */
+	fl_t bed_temp                = 65.0;
+	fl_t edge_overlap            = 0.5;        /* Allowable edge path overlap in units of extrusion_width */
+	bool strict_shell_order      = false;      /* Always do insets in order within an island */
+	bool infill_first            = false;      /* Do infill before shells */
+	bool align_seams             = true;       /* Align seams to the lower left corner */
+	bool clean_insets            = true;       /* Do ClipperLib::CleanPolygon operation on all insets (only the initial outline is cleaned if this is false) */
+	bool fill_inset_gaps         = true;       /* Fill gaps between shells */
+	bool no_solid                = false;      /* If true, only generate solid fill on the very top and bottom of the model */
+	bool anchor                  = false;      /* Clip and anchor inset paths */
+	bool outside_first           = false;      /* Prefer exterior shells */
+	bool solid_infill_first      = false;      /* Print solid infill before sparse infill */
+	bool separate_z_travel       = false;      /* Generate a separate z travel move instead of moving all axes together */
+	bool combine_all             = false;      /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
+	bool generate_support        = false;      /* Generate support structure */
+	bool support_everywhere      = false;      /* False means only touching build plate */
+	bool solid_support_base      = false;      /* Make supports solid at layer 0 */
+	bool connect_support_lines   = false;      /* Connect support lines together. Makes the support structure more robust, but harder to remove. */
 	ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	ClipperLib::JoinType inset_join_type    = ClipperLib::jtMiter;     /* Join type for negative offsets */
 	ClipperLib::JoinType outset_join_type   = ClipperLib::jtMiter;     /* Join type for positive offsets */
-	fl_t offset_miter_limit    = 2.0;
-	fl_t offset_arc_tolerance  = 5.0;
-	fl_t fill_threshold        = 0.5;        /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
-	fl_t support_angle         = 70.0;       /* Angle threshold for support */
-	fl_t support_margin        = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
-	int support_vert_margin    = 1;          /* Vertical spacing between support and model, in layers */
-	int interface_layers       = 0;          /* Number of solid support interface layers */
-	fl_t support_xy_expansion  = 2.0;        /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
-	fl_t support_density       = 0.3;        /* Support structure density */
-	fl_t support_flow_mult     = 0.75;       /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. */
-	fl_t min_layer_time        = 8.0;        /* Slow down if the estimated layer time is less than this value */
-	int layer_time_samples     = 5;          /* Number of samples in the layer time moving average */
-	fl_t min_feed_rate         = 10.0;
-	fl_t brim_width            = 0.0;
+	fl_t offset_miter_limit      = 2.0;
+	fl_t offset_arc_tolerance    = 5.0;
+	fl_t fill_threshold          = 0.5;        /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
+	fl_t support_angle           = 70.0;       /* Angle threshold for support */
+	fl_t support_margin          = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
+	int support_vert_margin      = 1;          /* Vertical spacing between support and model, in layers */
+	int interface_layers         = 0;          /* Number of solid support interface layers */
+	fl_t support_xy_expansion    = 2.0;        /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
+	fl_t support_density         = 0.3;        /* Support structure density */
+	fl_t support_flow_mult       = 0.75;       /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. */
+	fl_t min_layer_time          = 8.0;        /* Slow down if the estimated layer time is less than this value */
+	int layer_time_samples       = 5;          /* Number of samples in the layer time moving average */
+	fl_t min_feed_rate           = 10.0;
+	fl_t brim_width              = 0.0;
 	int brim_lines;
-	fl_t material_density      = 0.00125;    /* Material density in <arbitrary mass unit> / <input/output unit>^3. The default is correct for PLA and millimeter input/output units */
-	fl_t material_cost         = 0.01499;    /* Material cost in <arbitrary currency> / <arbitrary mass unit>. The arbitrary mass unit must be the same as used in material_density */
+	fl_t material_density        = 0.00125;    /* Material density in <arbitrary mass unit> / <input/output unit>^3. The default is correct for PLA and millimeter input/output units */
+	fl_t material_cost           = 0.01499;    /* Material cost in <arbitrary currency> / <arbitrary mass unit>. The arbitrary mass unit must be the same as used in material_density */
 
 	/* internal stuff */
-	fl_t xy_extra              = 0.0;        /* extra xy size (brim, extra_offset, support_xy_expansion, etc...) */
+	fl_t xy_extra                = 0.0;        /* extra xy size (brim, extra_offset, support_xy_expansion, etc...) */
 } config;
 
 struct vertex {
@@ -434,7 +435,14 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 		config.loop_feed_rate = atof(value);
 	}
 	else if (strcmp(key, "infill_feed_rate") == 0) {
-		config.infill_feed_rate = atof(value);
+		config.solid_infill_feed_rate = atof(value);
+		config.sparse_infill_feed_rate = config.solid_infill_feed_rate;
+	}
+	else if (strcmp(key, "solid_infill_feed_rate") == 0) {
+		config.solid_infill_feed_rate = atof(value);
+	}
+	else if (strcmp(key, "sparse_infill_feed_rate") == 0) {
+		config.sparse_infill_feed_rate = atof(value);
 	}
 	else if (strcmp(key, "support_feed_rate") == 0) {
 		config.support_feed_rate = atof(value);
@@ -2135,7 +2143,7 @@ static void plan_insets(struct slice *slice, struct island *island, struct machi
 	}
 }
 
-static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z)
+static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, ClipperLib::cInt z)
 {
 	while (!lines.empty()) {
 		bool flip_points;
@@ -2143,11 +2151,11 @@ static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct is
 		ClipperLib::Path &p = lines[best];
 		if (flip_points) {
 			linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-			linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false, true);
+			linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, feed_rate, 1.0, true, false, true);
 		}
 		else {
 			linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-			linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.infill_feed_rate, 1.0, true, false, true);
+			linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
 		}
 		lines.erase(lines.begin() + best);
 	}
@@ -2182,16 +2190,16 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 			island.solid_infill.insert(island.solid_infill.end(), island.sparse_infill.begin(), island.sparse_infill.end());
 		}
 		if (config.infill_first && layer_num != 0) {
-			plan_infill(island.solid_infill, slice, &island, m, z);
+			plan_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
 			if (config.solid_infill_first)
-				plan_infill(island.sparse_infill, slice, &island, m, z);
+				plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, z);
 			plan_insets(slice, &island, m, z, config.outside_first || layer_num == 0);
 		}
 		else {
 			plan_insets(slice, &island, m, z, config.outside_first || layer_num == 0);
-			plan_infill(island.solid_infill, slice, &island, m, z);
+			plan_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
 			if (config.solid_infill_first)
-				plan_infill(island.sparse_infill, slice, &island, m, z);
+				plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, z);
 		}
 		free(island.insets);
 		free(island.inset_gaps);
@@ -2502,97 +2510,101 @@ int main(int argc, char *argv[])
 	/* set feed rates */
 	config.perimeter_feed_rate = GET_FEED_RATE(config.perimeter_feed_rate, config.feed_rate);
 	config.loop_feed_rate = GET_FEED_RATE(config.loop_feed_rate, config.feed_rate);
-	config.infill_feed_rate = GET_FEED_RATE(config.infill_feed_rate, config.feed_rate);
+	config.solid_infill_feed_rate = GET_FEED_RATE(config.solid_infill_feed_rate, config.feed_rate);
+	config.sparse_infill_feed_rate = GET_FEED_RATE(config.sparse_infill_feed_rate, config.feed_rate);
 	config.support_feed_rate = GET_FEED_RATE(config.support_feed_rate, config.feed_rate);
 	config.travel_feed_rate = GET_FEED_RATE(config.travel_feed_rate, config.feed_rate);
 	config.moving_retract_speed = GET_FEED_RATE(config.moving_retract_speed, config.retract_speed);
 	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);
+	if (config.solid_infill_feed_rate != config.sparse_infill_feed_rate)
+		config.solid_infill_first = true;
 
 	fprintf(stderr, "configuration:\n");
-	fprintf(stderr, "  layer_height          = %f\n", config.layer_height);
-	fprintf(stderr, "  tolerance             = %f\n", sqrt(config.tolerance));
-	fprintf(stderr, "  scale_constant        = %f\n", config.scale_constant);
-	fprintf(stderr, "  coarseness            = %f\n", config.coarseness);
-	fprintf(stderr, "  extrusion_width       = %f\n", config.extrusion_width);
-	fprintf(stderr, " *edge_width            = %f\n", config.edge_width);
-	fprintf(stderr, " *extrusion_area        = %f\n", config.extrusion_area);
-	fprintf(stderr, "  scale_factor (-s)     = %f\n", scale_factor);
-	fprintf(stderr, "  xy_scale_factor       = %f\n", config.xy_scale_factor);
-	fprintf(stderr, "  z_scale_factor        = %f\n", config.z_scale_factor);
-	fprintf(stderr, "  x_center              = %f\n", config.x_center);
-	fprintf(stderr, "  y_center              = %f\n", config.y_center);
-	fprintf(stderr, "  packing_density       = %f\n", config.packing_density);
-	fprintf(stderr, "  edge_packing_density  = %f\n", config.edge_packing_density);
-	fprintf(stderr, "  seam_packing_density  = %f\n", config.seam_packing_density);
-	fprintf(stderr, "  extra_offset          = %f\n", config.extra_offset);
-	fprintf(stderr, " *edge_offset           = %f\n", config.edge_offset);
-	fprintf(stderr, " *shell_clip            = %f\n", config.shell_clip);
-	fprintf(stderr, "  infill_density        = %f\n", config.infill_density);
-	fprintf(stderr, "  infill_pattern        = %s\n", get_fill_pattern_string(config.infill_pattern));
-	fprintf(stderr, "  shells                = %d\n", config.shells);
-	fprintf(stderr, "  roof_thickness        = %f\n", config.roof_thickness);
-	fprintf(stderr, " *roof_layers           = %d\n", config.roof_layers);
-	fprintf(stderr, "  floor_thickness       = %f\n", config.floor_thickness);
-	fprintf(stderr, " *floor_layers          = %d\n", config.floor_layers);
-	fprintf(stderr, "  min_shell_contact     = %f\n", config.min_shell_contact);
-	fprintf(stderr, "  material_diameter     = %f\n", config.material_diameter);
-	fprintf(stderr, " *material_area         = %f\n", config.material_area);
-	fprintf(stderr, "  flow_multiplier       = %f\n", config.flow_multiplier);
-	fprintf(stderr, "  feed_rate             = %f\n", config.feed_rate);
-	fprintf(stderr, "  perimeter_feed_rate   = %f\n", config.perimeter_feed_rate);
-	fprintf(stderr, "  loop_feed_rate        = %f\n", config.loop_feed_rate);
-	fprintf(stderr, "  infill_feed_rate      = %f\n", config.infill_feed_rate);
-	fprintf(stderr, "  support_feed_rate     = %f\n", config.support_feed_rate);
-	fprintf(stderr, "  travel_feed_rate      = %f\n", config.travel_feed_rate);
-	fprintf(stderr, "  first_layer_mult      = %f\n", config.first_layer_mult);
-	fprintf(stderr, "  coast_len             = %f\n", config.coast_len);
-	fprintf(stderr, "  retract_len           = %f\n", config.retract_len);
-	fprintf(stderr, "  retract_speed         = %f\n", config.retract_speed);
-	fprintf(stderr, "  moving_retract_speed  = %f\n", config.moving_retract_speed);
-	fprintf(stderr, "  restart_speed         = %f\n", config.restart_speed);
-	fprintf(stderr, "  retract_min_travel    = %f\n", config.retract_min_travel);
-	fprintf(stderr, "  retract_threshold     = %f\n", config.retract_threshold);
-	fprintf(stderr, "  retract_within_island = %s\n", (config.retract_within_island) ? "true" : "false");
-	fprintf(stderr, "  moving_retract        = %s\n", (config.moving_retract) ? "true" : "false");
-	fprintf(stderr, "  extra_restart_len     = %f\n", config.extra_restart_len);
-	fprintf(stderr, "  cool_layer            = %d\n", config.cool_layer);
-	fprintf(stderr, "  temp                  = %f\n", config.temp);
-	fprintf(stderr, "  bed_temp              = %f\n", config.bed_temp);
-	fprintf(stderr, "  edge_overlap          = %f\n", config.edge_overlap);
-	fprintf(stderr, "  strict_shell_order    = %s\n", (config.strict_shell_order) ? "true" : "false");
-	fprintf(stderr, "  infill_first          = %s\n", (config.infill_first) ? "true" : "false");
-	fprintf(stderr, "  align_seams           = %s\n", (config.align_seams) ? "true" : "false");
-	fprintf(stderr, "  clean_insets          = %s\n", (config.clean_insets) ? "true" : "false");
-	fprintf(stderr, "  fill_inset_gaps       = %s\n", (config.fill_inset_gaps) ? "true" : "false");
-	fprintf(stderr, "  no_solid              = %s\n", (config.no_solid) ? "true" : "false");
-	fprintf(stderr, "  anchor                = %s\n", (config.anchor) ? "true" : "false");
-	fprintf(stderr, "  outside_first         = %s\n", (config.outside_first) ? "true" : "false");
-	fprintf(stderr, "  solid_infill_first    = %s\n", (config.solid_infill_first) ? "true" : "false");
-	fprintf(stderr, "  separate_z_travel     = %s\n", (config.separate_z_travel) ? "true" : "false");
-	fprintf(stderr, "  combine_all           = %s\n", (config.combine_all) ? "true" : "false");
-	fprintf(stderr, "  generate_support      = %s\n", (config.generate_support) ? "true" : "false");
-	fprintf(stderr, "  support_everywhere    = %s\n", (config.support_everywhere) ? "true" : "false");
-	fprintf(stderr, "  solid_support_base    = %s\n", (config.solid_support_base) ? "true" : "false");
-	fprintf(stderr, "  connect_support_lines = %s\n", (config.connect_support_lines) ? "true" : "false");
-	fprintf(stderr, "  poly_fill_type        = %s\n", get_poly_fill_type_string(config.poly_fill_type));
-	fprintf(stderr, "  inset_join_type       = %s\n", get_join_type_string(config.inset_join_type));
-	fprintf(stderr, "  outset_join_type      = %s\n", get_join_type_string(config.outset_join_type));
-	fprintf(stderr, "  offset_miter_limit    = %f\n", config.offset_miter_limit);
-	fprintf(stderr, "  offset_arc_tolerance  = %f\n", config.offset_arc_tolerance);
-	fprintf(stderr, "  fill_threshold        = %f\n", config.fill_threshold);
-	fprintf(stderr, "  support_angle         = %f\n", config.support_angle);
-	fprintf(stderr, "  support_margin        = %f\n", config.support_margin);
-	fprintf(stderr, "  support_vert_margin   = %d\n", config.support_vert_margin);
-	fprintf(stderr, "  interface_layers      = %d\n", config.interface_layers);
-	fprintf(stderr, "  support_xy_expansion  = %f\n", config.support_xy_expansion);
-	fprintf(stderr, "  support_density       = %f\n", config.support_density);
-	fprintf(stderr, "  support_flow_mult     = %f\n", config.support_flow_mult);
-	fprintf(stderr, "  min_layer_time        = %f\n", config.min_layer_time);
-	fprintf(stderr, "  layer_time_samples    = %d\n", config.layer_time_samples);
-	fprintf(stderr, "  min_feed_rate         = %f\n", config.min_feed_rate);
-	fprintf(stderr, "  brim_lines            = %d\n", config.brim_lines);
-	fprintf(stderr, "  material_density      = %f\n", config.material_density);
-	fprintf(stderr, "  material_cost         = %f\n", config.material_cost);
+	fprintf(stderr, "  layer_height            = %f\n", config.layer_height);
+	fprintf(stderr, "  tolerance               = %f\n", sqrt(config.tolerance));
+	fprintf(stderr, "  scale_constant          = %f\n", config.scale_constant);
+	fprintf(stderr, "  coarseness              = %f\n", config.coarseness);
+	fprintf(stderr, "  extrusion_width         = %f\n", config.extrusion_width);
+	fprintf(stderr, " *edge_width              = %f\n", config.edge_width);
+	fprintf(stderr, " *extrusion_area          = %f\n", config.extrusion_area);
+	fprintf(stderr, "  scale_factor (-s)       = %f\n", scale_factor);
+	fprintf(stderr, "  xy_scale_factor         = %f\n", config.xy_scale_factor);
+	fprintf(stderr, "  z_scale_factor          = %f\n", config.z_scale_factor);
+	fprintf(stderr, "  x_center                = %f\n", config.x_center);
+	fprintf(stderr, "  y_center                = %f\n", config.y_center);
+	fprintf(stderr, "  packing_density         = %f\n", config.packing_density);
+	fprintf(stderr, "  edge_packing_density    = %f\n", config.edge_packing_density);
+	fprintf(stderr, "  seam_packing_density    = %f\n", config.seam_packing_density);
+	fprintf(stderr, "  extra_offset            = %f\n", config.extra_offset);
+	fprintf(stderr, " *edge_offset             = %f\n", config.edge_offset);
+	fprintf(stderr, " *shell_clip              = %f\n", config.shell_clip);
+	fprintf(stderr, "  infill_density          = %f\n", config.infill_density);
+	fprintf(stderr, "  infill_pattern          = %s\n", get_fill_pattern_string(config.infill_pattern));
+	fprintf(stderr, "  shells                  = %d\n", config.shells);
+	fprintf(stderr, "  roof_thickness          = %f\n", config.roof_thickness);
+	fprintf(stderr, " *roof_layers             = %d\n", config.roof_layers);
+	fprintf(stderr, "  floor_thickness         = %f\n", config.floor_thickness);
+	fprintf(stderr, " *floor_layers            = %d\n", config.floor_layers);
+	fprintf(stderr, "  min_shell_contact       = %f\n", config.min_shell_contact);
+	fprintf(stderr, "  material_diameter       = %f\n", config.material_diameter);
+	fprintf(stderr, " *material_area           = %f\n", config.material_area);
+	fprintf(stderr, "  flow_multiplier         = %f\n", config.flow_multiplier);
+	fprintf(stderr, "  feed_rate               = %f\n", config.feed_rate);
+	fprintf(stderr, "  perimeter_feed_rate     = %f\n", config.perimeter_feed_rate);
+	fprintf(stderr, "  loop_feed_rate          = %f\n", config.loop_feed_rate);
+	fprintf(stderr, "  solid_infill_feed_rate  = %f\n", config.solid_infill_feed_rate);
+	fprintf(stderr, "  sparse_infill_feed_rate = %f\n", config.sparse_infill_feed_rate);
+	fprintf(stderr, "  support_feed_rate       = %f\n", config.support_feed_rate);
+	fprintf(stderr, "  travel_feed_rate        = %f\n", config.travel_feed_rate);
+	fprintf(stderr, "  first_layer_mult        = %f\n", config.first_layer_mult);
+	fprintf(stderr, "  coast_len               = %f\n", config.coast_len);
+	fprintf(stderr, "  retract_len             = %f\n", config.retract_len);
+	fprintf(stderr, "  retract_speed           = %f\n", config.retract_speed);
+	fprintf(stderr, "  moving_retract_speed    = %f\n", config.moving_retract_speed);
+	fprintf(stderr, "  restart_speed           = %f\n", config.restart_speed);
+	fprintf(stderr, "  retract_min_travel      = %f\n", config.retract_min_travel);
+	fprintf(stderr, "  retract_threshold       = %f\n", config.retract_threshold);
+	fprintf(stderr, "  retract_within_island   = %s\n", (config.retract_within_island) ? "true" : "false");
+	fprintf(stderr, "  moving_retract          = %s\n", (config.moving_retract) ? "true" : "false");
+	fprintf(stderr, "  extra_restart_len       = %f\n", config.extra_restart_len);
+	fprintf(stderr, "  cool_layer              = %d\n", config.cool_layer);
+	fprintf(stderr, "  temp                    = %f\n", config.temp);
+	fprintf(stderr, "  bed_temp                = %f\n", config.bed_temp);
+	fprintf(stderr, "  edge_overlap            = %f\n", config.edge_overlap);
+	fprintf(stderr, "  strict_shell_order      = %s\n", (config.strict_shell_order) ? "true" : "false");
+	fprintf(stderr, "  infill_first            = %s\n", (config.infill_first) ? "true" : "false");
+	fprintf(stderr, "  align_seams             = %s\n", (config.align_seams) ? "true" : "false");
+	fprintf(stderr, "  clean_insets            = %s\n", (config.clean_insets) ? "true" : "false");
+	fprintf(stderr, "  fill_inset_gaps         = %s\n", (config.fill_inset_gaps) ? "true" : "false");
+	fprintf(stderr, "  no_solid                = %s\n", (config.no_solid) ? "true" : "false");
+	fprintf(stderr, "  anchor                  = %s\n", (config.anchor) ? "true" : "false");
+	fprintf(stderr, "  outside_first           = %s\n", (config.outside_first) ? "true" : "false");
+	fprintf(stderr, "  solid_infill_first      = %s\n", (config.solid_infill_first) ? "true" : "false");
+	fprintf(stderr, "  separate_z_travel       = %s\n", (config.separate_z_travel) ? "true" : "false");
+	fprintf(stderr, "  combine_all             = %s\n", (config.combine_all) ? "true" : "false");
+	fprintf(stderr, "  generate_support        = %s\n", (config.generate_support) ? "true" : "false");
+	fprintf(stderr, "  support_everywhere      = %s\n", (config.support_everywhere) ? "true" : "false");
+	fprintf(stderr, "  solid_support_base      = %s\n", (config.solid_support_base) ? "true" : "false");
+	fprintf(stderr, "  connect_support_lines   = %s\n", (config.connect_support_lines) ? "true" : "false");
+	fprintf(stderr, "  poly_fill_type          = %s\n", get_poly_fill_type_string(config.poly_fill_type));
+	fprintf(stderr, "  inset_join_type         = %s\n", get_join_type_string(config.inset_join_type));
+	fprintf(stderr, "  outset_join_type        = %s\n", get_join_type_string(config.outset_join_type));
+	fprintf(stderr, "  offset_miter_limit      = %f\n", config.offset_miter_limit);
+	fprintf(stderr, "  offset_arc_tolerance    = %f\n", config.offset_arc_tolerance);
+	fprintf(stderr, "  fill_threshold          = %f\n", config.fill_threshold);
+	fprintf(stderr, "  support_angle           = %f\n", config.support_angle);
+	fprintf(stderr, "  support_margin          = %f\n", config.support_margin);
+	fprintf(stderr, "  support_vert_margin     = %d\n", config.support_vert_margin);
+	fprintf(stderr, "  interface_layers        = %d\n", config.interface_layers);
+	fprintf(stderr, "  support_xy_expansion    = %f\n", config.support_xy_expansion);
+	fprintf(stderr, "  support_density         = %f\n", config.support_density);
+	fprintf(stderr, "  support_flow_mult       = %f\n", config.support_flow_mult);
+	fprintf(stderr, "  min_layer_time          = %f\n", config.min_layer_time);
+	fprintf(stderr, "  layer_time_samples      = %d\n", config.layer_time_samples);
+	fprintf(stderr, "  min_feed_rate           = %f\n", config.min_feed_rate);
+	fprintf(stderr, "  brim_lines              = %d\n", config.brim_lines);
+	fprintf(stderr, "  material_density        = %f\n", config.material_density);
+	fprintf(stderr, "  material_cost           = %f\n", config.material_cost);
 #ifdef _OPENMP
 	fprintf(stderr, "OpenMP enabled\n");
 #endif
