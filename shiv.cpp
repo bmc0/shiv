@@ -145,6 +145,7 @@ static struct {
 	fl_t temp                    = 220.0;      /* Hotend temperature */
 	fl_t bed_temp                = 65.0;
 	fl_t edge_overlap            = 0.5;        /* Allowable edge path overlap in units of extrusion_width */
+	bool comb                    = false;      /* Enable combing of travel moves */
 	bool strict_shell_order      = false;      /* Always do insets in order within an island */
 	bool infill_first            = false;      /* Do infill before shells */
 	bool align_seams             = true;       /* Align seams to the lower left corner */
@@ -217,13 +218,15 @@ struct cint_rect {
 };
 
 struct island {
-	ClipperLib::Paths outlines;
 	ClipperLib::Paths *insets;
 	ClipperLib::Paths *inset_gaps;
 	ClipperLib::Paths infill_insets;
 	ClipperLib::Paths solid_infill;
 	ClipperLib::Paths sparse_infill;
-	ClipperLib::Paths boundaries;
+	ClipperLib::Paths boundaries;        /* Boundaries when moving inside (slightly outset from the first inset) */
+	ClipperLib::Paths comb_paths;        /* Equal to the first inset (needed because insets get erased during planning) */
+	ClipperLib::Paths outer_boundaries;  /* Boundaries when moving outside */
+	ClipperLib::Paths outer_comb_paths;  /* Slightly outset from outer_boundaries */
 	ClipperLib::Paths solid_infill_clip;
 	ClipperLib::Paths exposed_surface;
 	struct cint_rect box;  /* bounding box */
@@ -250,6 +253,8 @@ struct slice {
 	ClipperLib::Paths support_boundaries;
 	ClipperLib::Paths support_lines;
 	ClipperLib::Paths support_interface_lines;
+	ClipperLib::Paths last_boundaries, last_comb_paths;
+	ClipperLib::Paths printed_outer_boundaries, printed_outer_comb_paths;
 	fl_t layer_time;
 };
 
@@ -518,6 +523,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 		config.edge_overlap = atof(value);
 		CHECK_VALUE(config.edge_overlap >= 0.0 && config.edge_overlap <= 1.0, "edge overlap", "within [0, 1]");
 	}
+	else if (strcmp(key, "comb") == 0) {
+		config.comb = PARSE_BOOL(value);
+	}
 	else if (strcmp(key, "strict_shell_order") == 0) {
 		config.strict_shell_order = PARSE_BOOL(value);
 	}
@@ -601,7 +609,7 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "support_margin") == 0) {
 		config.support_margin = atof(value);
-		CHECK_VALUE(config.support_margin >= 0.0, "support margin", ">= 0");
+		CHECK_VALUE(config.support_margin >= 0.0, "support margin", ">= 0.0");  /* FIXME: will cause problems with the combing code if set to 0 */
 	}
 	else if (strcmp(key, "support_vert_margin") == 0) {
 		config.support_vert_margin = atoi(value);
@@ -844,9 +852,12 @@ static void generate_islands(struct slice *slice, ClipperLib::PolyNode *n)
 {
 	for (ClipperLib::PolyNode *c : n->Childs) {
 		struct island island = {};
-		island.outlines.push_back(c->Contour);
+		island.insets = (ClipperLib::Paths *) calloc((config.shells > 1) ? config.shells : 1, sizeof(ClipperLib::Paths));
+		if (!island.insets)
+			die(e_nomem, 2);
+		island.insets[0].push_back(c->Contour);
 		for (ClipperLib::PolyNode *cc : c->Childs) {
-			island.outlines.push_back(cc->Contour);
+			island.insets[0].push_back(cc->Contour);
 			generate_islands(slice, cc);
 		}
 		slice->islands.push_back(island);
@@ -857,23 +868,25 @@ static void generate_islands(struct slice *slice, ClipperLib::PolyNode *n)
 static void find_bounding_box(struct island *island)
 {
 	bool first = true;
-	for (ClipperLib::IntPoint &p : island->outlines[0]) {
-		if (first) {
-			island->box.x0 = p.X;
-			island->box.y0 = p.Y;
-			island->box.x1 = p.X;
-			island->box.y1 = p.Y;
-			first = false;
-		}
-		else {
-			if (p.X < island->box.x0)
+	for (ClipperLib::Path &path : island->insets[0]) {
+		for (ClipperLib::IntPoint &p : path) {
+			if (first) {
 				island->box.x0 = p.X;
-			if (p.X > island->box.x1)
-				island->box.x1 = p.X;
-			if (p.Y > island->box.y0)
 				island->box.y0 = p.Y;
-			if (p.Y < island->box.y1)
+				island->box.x1 = p.X;
 				island->box.y1 = p.Y;
+				first = false;
+			}
+			else {
+				if (p.X < island->box.x0)
+					island->box.x0 = p.X;
+				if (p.X > island->box.x1)
+					island->box.x1 = p.X;
+				if (p.Y > island->box.y0)
+					island->box.y0 = p.Y;
+				if (p.Y < island->box.y1)
+					island->box.y1 = p.Y;
+			}
 		}
 	}
 }
@@ -1011,11 +1024,24 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 		oseg.h = oseg.t = NULL;
 	}
 	free(slice->s);
+	ClipperLib::SimplifyPolygons(outlines, config.poly_fill_type);
 	ClipperLib::PolyTree tree;
-	ClipperLib::Clipper c;
-	c.AddPaths(outlines, ClipperLib::ptSubject, true);
-	c.Execute(ClipperLib::ctUnion, tree, config.poly_fill_type, config.poly_fill_type);
+	ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
+	co.AddPaths(outlines, config.inset_join_type, ClipperLib::etClosedPolygon);
+	if (1.0 - config.edge_overlap > 0.0) {
+		ClipperLib::Paths tmp;
+		fl_t extra = config.extrusion_width * (1.0 - config.edge_overlap) / -2.0;
+		co.Execute(tmp, FL_T_TO_CINT(config.edge_offset + config.extra_offset + extra));
+		co.Clear();
+		co.AddPaths(tmp, config.outset_join_type, ClipperLib::etClosedPolygon);
+		co.Execute(tree, FL_T_TO_CINT(-extra));
+	}
+	else
+		co.Execute(tree, FL_T_TO_CINT(config.edge_offset + config.extra_offset));
 	generate_islands(slice, &tree);
+	if (config.clean_insets)
+		for (struct island &island : slice->islands)
+			ClipperLib::CleanPolygons(island.insets[0], CLEAN_DIST);
 #if USE_BOUNDING_BOX
 	for (struct island &island : slice->islands)
 		find_bounding_box(&island);
@@ -1065,13 +1091,7 @@ static void do_offset_square(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl
 static void generate_insets(struct slice *slice)
 {
 	for (struct island &island : slice->islands) {
-		island.insets = (ClipperLib::Paths *) calloc(config.shells, sizeof(ClipperLib::Paths));
-		if (!island.insets)
-			die(e_nomem, 2);
 		if (config.shells > 0) {
-			do_offset(island.outlines, island.insets[0], config.edge_offset + config.extra_offset, 1.0 - config.edge_overlap);
-			if (config.clean_insets)
-				ClipperLib::CleanPolygons(island.insets[0], CLEAN_DIST);
 			for (int i = 1; i < config.shells; ++i) {
 				do_offset(island.insets[i - 1], island.insets[i], -config.extrusion_width, 1.0);
 				if (config.clean_insets)
@@ -1080,19 +1100,24 @@ static void generate_insets(struct slice *slice)
 					goto done;
 			}
 			do_offset(island.insets[config.shells - 1], island.infill_insets, -config.extrusion_width / 2.0, 0.0);
+			ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST);
 		}
 		else {
 			/* The offset distance here is not *technically* correct, but I'm not sure one can expect high dimensional accuracy when only printing infill anyway... */
-			do_offset(island.outlines, island.infill_insets, config.edge_offset + config.extra_offset, 0.0);
+			island.infill_insets = island.insets[0];
 		}
-		ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST);
 
 		done:
-		do_offset((config.shells > 0) ? island.insets[0] : island.infill_insets, island.boundaries, config.extrusion_width / 8.0, 0.0);
+		do_offset(island.insets[0], island.boundaries, config.extrusion_width / 8.0, 0.0);
 		if (config.solid_infill_clip_offset > 0.0)
 			do_offset(island.infill_insets, island.solid_infill_clip, config.solid_infill_clip_offset, 0.0);
 		else
 			island.solid_infill_clip = island.infill_insets;
+		if (config.comb) {
+			island.comb_paths = island.insets[0];
+			do_offset(island.comb_paths, island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
+			do_offset(island.outer_boundaries, island.outer_comb_paths, config.extrusion_width / 8.0, 0.0);
+		}
 		if (config.shells > 1 && config.fill_inset_gaps) {
 			ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
 			ClipperLib::Paths hole;
@@ -1258,7 +1283,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
 				for (struct island &clip_island : o->slices[slice_index + 1].islands)
 					if (BOUNDING_BOX_INTERSECTS(island.box, clip_island.box))
-						c.AddPaths((config.shells > 0) ? clip_island.insets[0] : clip_island.infill_insets, ClipperLib::ptClip, true);
+						c.AddPaths(clip_island.insets[0], ClipperLib::ptClip, true);
 				c.Execute(ClipperLib::ctDifference, island.exposed_surface, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 				c.Clear();
 			}
@@ -1350,11 +1375,11 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 	ClipperLib::Clipper c;
 	ClipperLib::Paths clip_paths;
 	for (struct island &island : o->slices[slice_index - 1].islands)
-		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, config.outset_join_type, ClipperLib::etClosedPolygon);
+		co.AddPaths(island.insets[0], config.outset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(clip_paths, FL_T_TO_CINT(tan(config.support_angle / 180.0 * M_PI) * config.layer_height));
 	co.Clear();
 	for (struct island &island : o->slices[slice_index].islands)
-		c.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, ClipperLib::ptSubject, true);
+		c.AddPaths(island.insets[0], ClipperLib::ptSubject, true);
 	c.AddPaths(clip_paths, ClipperLib::ptClip, true);
 	c.Execute(ClipperLib::ctDifference, clip_paths, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 	c.Clear();
@@ -1366,7 +1391,7 @@ static void generate_support_boundaries(struct slice *slice)
 {
 	ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
 	for (struct island &island : slice->islands)
-		co.AddPaths((config.shells > 0) ? island.insets[0] : island.infill_insets, config.outset_join_type, ClipperLib::etClosedPolygon);
+		co.AddPaths(island.insets[0], config.outset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(slice->support_boundaries, FL_T_TO_CINT((0.5 + config.support_margin) * config.edge_width - config.edge_offset));
 }
 
@@ -1490,12 +1515,8 @@ static void generate_brim(struct object *o)
 {
 	for (int i = 1; i <= config.brim_lines; ++i) {
 		ClipperLib::Paths tmp;
-		for (struct island &island : o->slices[0].islands) {
-			if (config.shells > 0)
+		for (struct island &island : o->slices[0].islands)
 				tmp.insert(tmp.end(), island.insets[0].begin(), island.insets[0].end());
-			else
-				tmp.insert(tmp.end(), island.infill_insets.begin(), island.infill_insets.end());
-		}
 		if (config.generate_support) {
 			tmp.insert(tmp.end(), o->slices[0].support_map.begin(), o->slices[0].support_map.end());
 			ClipperLib::SimplifyPolygons(tmp, ClipperLib::pftNonZero);
@@ -1600,9 +1621,9 @@ static void preview_slices(struct object *o)
 		fprintf(stderr, "layer %zd/%zd: intersections = %zd; islands = %zd\n", i + 1, o->n_slices, o->slices[i].n_seg, o->slices[i].islands.size());
 		fprintf(stdout, "set title 'Layer %zd/%zd'\n", i + 1, o->n_slices);
 		/* Draw outlines */
-		fprintf(stdout, "plot \"-\" lc \"red\" dt 3 with lines title \"outline\", \"-\" lc \"blue\" with lines title \"insets\", \"-\" lc \"green\" with lines title \"infill\"\n");
+		fprintf(stdout, "plot \"-\" lc \"red\" dt 3 with lines title \"boundaries\", \"-\" lc \"blue\" with lines title \"insets\", \"-\" lc \"green\" with lines title \"infill\"\n");
 		for (struct island &island : o->slices[i].islands) {
-			for (ClipperLib::Path &path : island.outlines) {
+			for (ClipperLib::Path &path : island.boundaries) {
 				if (path.size() >= 3) {
 					for (ClipperLib::IntPoint &p : path)
 						fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
@@ -1728,15 +1749,15 @@ static ssize_t get_boundary_crossing(ClipperLib::Path &p, ClipperLib::IntPoint &
 	return -1;
 }
 
-static bool crosses_boundary(struct machine *m, struct island *island, ClipperLib::cInt x, ClipperLib::cInt y)
+static ssize_t crosses_boundary(struct machine *m, ClipperLib::Paths &bounds, ClipperLib::cInt x, ClipperLib::cInt y)
 {
 	ClipperLib::IntPoint p0(m->x, m->y);
 	ClipperLib::IntPoint p1(x, y);
-	for (ClipperLib::Path &p : island->boundaries) {
-		if (get_boundary_crossing(p, p0, p1) >= 0)
-			return true;
+	for (size_t i = 0; i < bounds.size(); ++i) {
+		if (get_boundary_crossing(bounds[i], p0, p1) >= 0)
+			return (ssize_t) i;
 	}
-	return false;
+	return -1;
 }
 
 static bool crosses_exposed_surface(struct machine *m, struct island *island, ClipperLib::cInt x, ClipperLib::cInt y)
@@ -1750,6 +1771,24 @@ static bool crosses_exposed_surface(struct machine *m, struct island *island, Cl
 			return true;
 	}
 	return false;
+}
+
+static size_t find_nearest_point(ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
+{
+	size_t best = 0;
+	fl_t best_dist = HUGE_VAL;
+	fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	for (size_t i = 0; i < p.size(); ++i) {
+		fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
+		fl_t dist = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+		if (dist < best_dist) {
+			best_dist = dist;
+			best = i;
+		}
+	}
+	if (r_dist)
+		*r_dist = best_dist;
+	return best;
 }
 
 static size_t find_nearest_path(ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, size_t *r_start)
@@ -1829,6 +1868,129 @@ static void append_g_move(struct slice *slice, struct g_move &move, fl_t len)
 	slice->moves.push_back(move);
 }
 
+static fl_t get_partial_path_len(ClipperLib::Path &p, size_t start, size_t end, bool reverse)
+{
+	fl_t l = 0.0;
+	fl_t x0 = CINT_TO_FL_T(p[start].X), y0 = CINT_TO_FL_T(p[start].Y);
+	size_t i = start;
+	do {
+		if (reverse) i = (i > 0) ? i - 1 : p.size() - 1;
+		else i = (i < p.size() - 1) ? i + 1 : 0;
+		fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
+		l += sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+		x0 = x1;
+		y0 = y1;
+	} while (i != end);
+	return l;
+}
+
+static ssize_t crosses_boundary_2pt(ClipperLib::Paths &b, ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1)
+{
+	fl_t start_x = CINT_TO_FL_T(p0.X), start_y = CINT_TO_FL_T(p0.Y), best_dist = HUGE_VAL;
+	ssize_t b_idx = -1;
+
+	for (size_t i = 0; i < b.size(); ++i) {
+		ClipperLib::Path &p = b[i];
+		/* Find all intersections, selecting the nearest one. Ignore if there are fewer than two intersections. */
+		fl_t tmp_best_dist = HUGE_VAL;
+		size_t intersections = 0;
+		for (size_t k = 0; k < p.size(); ++k) {
+			if (intersects(p[(k == 0) ? p.size() - 1 : k - 1], p[k], p0, p1)) {
+				fl_t x1 = CINT_TO_FL_T(p[k].X), y1 = CINT_TO_FL_T(p[k].Y);
+				fl_t dist = (x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y);
+				if (dist < tmp_best_dist)
+					tmp_best_dist = dist;
+				++intersections;
+				if (p[k] == p0 || p[k] == p1)
+					++k;  /* So the same pont isn't registered as two intersections */
+			}
+		}
+		if (intersections > 1 && tmp_best_dist < best_dist) {
+			b_idx = (ssize_t) i;
+			best_dist = tmp_best_dist;
+		}
+	}
+	return b_idx;
+}
+
+static size_t find_best_travel_point(ClipperLib::Paths &b, size_t b_idx, ClipperLib::IntPoint &p0, size_t start_idx, size_t end_idx, bool reverse)
+{
+	ClipperLib::Path &p = b[b_idx];
+	size_t i = end_idx, r;
+	do {
+		r = i;
+		if (crosses_boundary_2pt(b, p0, p[i]) < 0) return i;
+		if (reverse) i = (i < p.size() - 1) ? i + 1 : 0;
+		else i = (i > 0) ? i - 1 : p.size() - 1;
+	} while (i != start_idx);
+	return r;
+}
+
+static void append_linear_travel(struct slice *slice, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t feed_rate)
+{
+	if (x != m->x || y != m->y || z != m->z) {
+		fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
+		fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
+		fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
+		struct g_move move = { x, y, z, 0.0, feed_rate, false, true, false };
+		append_g_move(slice, move, len);
+		m->x = x;
+		m->y = y;
+		m->z = z;
+	}
+}
+
+/* FIXME: This should probably obey the retract threshold */
+static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Paths &bounds, ClipperLib::Paths &paths, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
+{
+	if (x == m->x || y == m->y || paths.size() == 0)
+		return;
+	ClipperLib::Paths b = bounds;
+
+	while (b.size() > 0) {
+		ClipperLib::IntPoint p0(m->x, m->y), p1(x, y);
+		ssize_t bound_idx = crosses_boundary_2pt(b, p0, p1);
+		if (bound_idx < 0)  /* No boundary crossings, so we can move directly there */
+			return;
+
+		ClipperLib::Path &p = b[bound_idx];
+		/* Find the boundary point closest to the start point */
+		size_t start_idx = find_nearest_point(p, p0.X, p0.Y, NULL);
+		/* Find the boundary point closest to the end point */
+		size_t end_idx = find_nearest_point(p, x, y, NULL);
+		if (start_idx == end_idx) {
+			/* We can't do anything if start_idx and end_idx are equal */
+			b.erase(b.begin() + bound_idx);
+			continue;
+		}
+		/* Find shortest direction */
+		fl_t f_len = get_partial_path_len(p, start_idx, end_idx, false);
+		fl_t r_len = get_partial_path_len(p, start_idx, end_idx, true);
+		bool reverse = (r_len < f_len) ? true : false;
+
+		size_t i;
+		/* Start one point back from start_idx so we check all relevant segments */
+		if (reverse) i = (start_idx < p.size() - 1) ? start_idx + 1 : 0;
+		else i = (start_idx > 0) ? start_idx - 1 : p.size() - 1;
+		do {
+			i = find_best_travel_point(b, bound_idx, p0, i, end_idx, reverse);
+			size_t path_pt_idx, path_idx = find_nearest_path(paths, p[i].X, p[i].Y, NULL, &path_pt_idx);
+			append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
+			p0 = paths[path_idx][path_pt_idx];
+			if (crosses_boundary_2pt(b, p0, p1) < 0)
+				return; /* No more boundary crossings */
+		} while (i != end_idx);
+	}
+}
+
+/* Move to the point nearest to the target location */
+static void move_to_island_exit(struct slice *slice, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
+{
+	size_t point_num, path_num = find_nearest_path(slice->printed_outer_comb_paths, x, y, NULL, &point_num);
+	ClipperLib::IntPoint &point = slice->printed_outer_comb_paths[path_num][point_num];
+	combed_travel(slice, m, slice->last_boundaries, slice->last_comb_paths, point.X, point.Y, feed_rate);
+}
+
 static void linear_move(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel, bool doing_infill)
 {
 	fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
@@ -1838,17 +2000,36 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 	if (is_travel) {
 		if (!m->is_retracted && config.retract_len > 0.0
 			&& (m->force_retract
+				|| slice->last_boundaries.size() > 0
 				|| len > ((doing_infill) ? config.retract_threshold : config.retract_min_travel)
 				|| (config.retract_within_island && len > config.retract_min_travel)
-				|| (island && crosses_boundary(m, island, x, y))
+				|| (island && crosses_boundary(m, island->boundaries, x, y) >= 0)
 				|| (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(m, island, x, y))
 			)
 		) {
+			/* FIXME: This will cause a retract even if the path is modified to stay within the island */
 			struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false, false };
 			append_g_move(slice, retract_move, config.retract_len);
 			m->is_retracted = true;
 		}
 		m->force_retract = false;
+		if (z == m->z && config.comb) {
+			if (slice->last_boundaries.size() > 0) {
+				/* Inside an island and moving to a point outside of it */
+				move_to_island_exit(slice, m, x, y, feed_rate);
+				slice->last_boundaries.clear();
+				slice->last_comb_paths.clear();
+				combed_travel(slice, m, slice->printed_outer_boundaries, slice->printed_outer_comb_paths, x, y, feed_rate);
+			}
+			else if (island) {
+				/* Moving within an island */
+				combed_travel(slice, m, island->boundaries, island->comb_paths, x, y, feed_rate);
+			}
+			else {
+				/* Moving between two points that are not in an island */
+				combed_travel(slice, m, slice->printed_outer_boundaries, slice->printed_outer_comb_paths, x, y, feed_rate);
+			}
+		}
 	}
 	else {
 		if (m->is_retracted && config.retract_len > 0.0) {
@@ -1873,27 +2054,6 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 		m->z = z;
 	}
 }
-
-#if 0
-/* This function is unused at the moment, but may be useful in the future */
-static fl_t get_partial_path_len(ClipperLib::Path &p, size_t start, size_t end, bool reverse)
-{
-	fl_t l = 0.0;
-	fl_t x0 = CINT_TO_FL_T(p[start].X), y0 = CINT_TO_FL_T(p[start].Y);
-	size_t i = start;
-	do {
-		if (reverse)
-			i = (i < 1) ? p.size() - 1 : i - 1;
-		else
-			i = (i >= p.size() - 1) ? 0 : i + 1;
-		fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
-		l += sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
-		x0 = x1;
-		y0 = y1;
-	} while (i != end);
-	return l;
-}
-#endif
 
 static bool path_len_is_greater_than(ClipperLib::Path &p, fl_t len)
 {
@@ -2173,10 +2333,10 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		fl_t best_dist = HUGE_VAL;
 		for (size_t i = 0; i < slice->islands.size(); ++i) {
 			fl_t dist;
-			if (config.align_seams && config.shells > 0)
+			if (config.align_seams)
 				find_nearest_aligned_path(slice->islands[i].insets[0], m->x, m->y, &dist);
 			else
-				find_nearest_path((config.shells > 0) ? slice->islands[i].insets[0] : slice->islands[i].infill_insets, m->x, m->y, &dist, NULL);
+				find_nearest_path(slice->islands[i].insets[0], m->x, m->y, &dist, NULL);
 			if (dist < best_dist) {
 				best = i;
 				best_dist = dist;
@@ -2201,9 +2361,25 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		}
 		free(island.insets);
 		free(island.inset_gaps);
+		if (config.comb) {
+			/* Insert and union outer boundaries for the island we just printed */
+			slice->printed_outer_boundaries.insert(slice->printed_outer_boundaries.end(), island.outer_boundaries.begin(), island.outer_boundaries.end());
+			ClipperLib::SimplifyPolygons(slice->printed_outer_boundaries, ClipperLib::pftNonZero);
+			slice->printed_outer_comb_paths.insert(slice->printed_outer_comb_paths.end(), island.outer_comb_paths.begin(), island.outer_comb_paths.end());
+			ClipperLib::SimplifyPolygons(slice->printed_outer_comb_paths, ClipperLib::pftNonZero);
+			/* Set last_boundaries and last_comb_paths */
+			slice->last_boundaries = island.boundaries;
+			slice->last_comb_paths = island.comb_paths;
+		}
 		slice->islands.erase(slice->islands.begin() + best);
 	}
-	m->force_retract = true;  /* force retract on layer change */
+	m->force_retract = true;  /* Force retract on layer change */
+	if (config.comb) {
+		FREE_VECTOR(slice->last_boundaries);
+		FREE_VECTOR(slice->last_comb_paths);
+		FREE_VECTOR(slice->printed_outer_boundaries);
+		FREE_VECTOR(slice->printed_outer_comb_paths);
+	}
 }
 
 static void write_gcode_string(const char *s, FILE *f)
@@ -2569,6 +2745,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  temp                    = %f\n", config.temp);
 	fprintf(stderr, "  bed_temp                = %f\n", config.bed_temp);
 	fprintf(stderr, "  edge_overlap            = %f\n", config.edge_overlap);
+	fprintf(stderr, "  comb                    = %s\n", (config.comb) ? "true" : "false");
 	fprintf(stderr, "  strict_shell_order      = %s\n", (config.strict_shell_order) ? "true" : "false");
 	fprintf(stderr, "  infill_first            = %s\n", (config.infill_first) ? "true" : "false");
 	fprintf(stderr, "  align_seams             = %s\n", (config.align_seams) ? "true" : "false");

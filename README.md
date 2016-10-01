@@ -111,6 +111,7 @@ Option                    | Default value | Description
 `temp`                    |       `220.0` | Hotend temperature.
 `bed_temp`                |        `65.0` | Bed temperature.
 `edge_overlap`            |         `0.5` | Allowable edge path overlap in units of `extrusion_width`.
+`comb`                    |       `false` | Avoid crossing boundaries.
 `strict_shell_order`      |       `false` | Always do insets in order within an island.
 `infill_first`            |       `false` | Do infill before shells.
 `align_seams`             |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
