@@ -65,7 +65,7 @@ Option                    | Default value | Description
 `layer_height`            |         `0.2` | Layer height.
 `tolerance`               |       `0.001` | Segment connection tolerance. Large values can be used to close holes in broken models.
 `scale_constant`          |   `1000000.0` | Clipper uses integers, so we need to scale floating point values. Precision is `1/scale_constant` units. Coordinates in the range `±4.6e+18/scale_constant` are accepted.
-`coarseness`              |       `0.005` | Approximate output coarseness. Useful for simplifying high polygon count meshes.
+`coarseness`              |        `0.01` | Approximate output coarseness. Useful for simplifying high polygon count meshes.
 `extrusion_width`         |         `0.4` | Constrained extrusion width. Should *generally* be set to a value similar to your nozzle diameter.
 `xy_scale_factor`         |       `1.003` | The object is scaled by this ratio in the x and y axes to compensate for shrinkage. Around 1.003 works for PLA. ABS should be somewhere between 1.004 and 1.009.
 `z_scale_factor`          |         `1.0` | The object is scaled by this ratio in the z axis to compensate for shrinkage. Should probably be left at 1 unless a high temperature heated chamber is used.
@@ -115,7 +115,7 @@ Option                    | Default value | Description
 `strict_shell_order`      |       `false` | Always do insets in order within an island.
 `infill_first`            |       `false` | Do infill before shells.
 `align_seams`             |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
-`clean_insets`            |        `true` | Do `ClipperLib::CleanPolygon()` on all insets (only the initial outline is cleaned if this is false).
+`simplify_insets`         |        `true` | Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false)
 `fill_inset_gaps`         |        `true` | Fill gaps between shells.
 `no_solid`                |       `false` | If true, only generate solid fill on the very top and bottom of the model.
 `anchor`                  |       `false` | Clip and anchor inset paths.

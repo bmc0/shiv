@@ -30,7 +30,7 @@
 #include "misc_defs.h"
 #include "list.h"
 
-#define CLEAN_DIST                 (1.41421356 * config.coarseness * config.scale_constant)
+#define SIMPLIFY_EPSILON           (config.coarseness * config.scale_constant)
 #define USE_BOUNDING_BOX           1
 #define SHIV_DEBUG                 1
 typedef double fl_t;
@@ -90,7 +90,7 @@ static struct {
 	fl_t layer_height            = 0.2;
 	fl_t tolerance               = 0.001;      /* Segment connection tolerance */
 	fl_t scale_constant          = 1000000.0;  /* Clipper uses integers, so we need to scale floating point values. Precision is 1/scale_constant units. Coordinates in the range `±4.6e+18/scale_constant` are accepted. */
-	fl_t coarseness              = 0.005;      /* Approximate output coarseness. Useful for simplifying high polygon count meshes. */
+	fl_t coarseness              = 0.01;       /* Approximate output coarseness. Useful for simplifying high polygon count meshes. */
 	fl_t extrusion_width         = 0.4;        /* Constrained (solid infill) extrusion width */
 	fl_t edge_width;                           /* Unconstrained (edge) extrusion width (calculated from extrusion_width) */
 	fl_t extrusion_area;                       /* Cross-sectional area of an extrusion */
@@ -149,7 +149,7 @@ static struct {
 	bool strict_shell_order      = false;      /* Always do insets in order within an island */
 	bool infill_first            = false;      /* Do infill before shells */
 	bool align_seams             = true;       /* Align seams to the lower left corner */
-	bool clean_insets            = true;       /* Do ClipperLib::CleanPolygon operation on all insets (only the initial outline is cleaned if this is false) */
+	bool simplify_insets         = true;       /* Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false) */
 	bool fill_inset_gaps         = true;       /* Fill gaps between shells */
 	bool no_solid                = false;      /* If true, only generate solid fill on the very top and bottom of the model */
 	bool anchor                  = false;      /* Clip and anchor inset paths */
@@ -535,8 +535,8 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "align_seams") == 0) {
 		config.align_seams = PARSE_BOOL(value);
 	}
-	else if (strcmp(key, "clean_insets") == 0) {
-		config.clean_insets = PARSE_BOOL(value);
+	else if (strcmp(key, "simplify_insets") == 0) {
+		config.simplify_insets = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "fill_inset_gaps") == 0) {
 		config.fill_inset_gaps = PARSE_BOOL(value);
@@ -892,6 +892,65 @@ static void find_bounding_box(struct island *island)
 }
 #endif
 
+static fl_t distance_to_point(ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1)
+{
+	fl_t dx = p1.X - p0.X, dy = p1.Y - p0.Y;
+	return sqrt(dx * dx + dy * dy);
+}
+
+static fl_t distance_to_line(ClipperLib::IntPoint &p, ClipperLib::IntPoint &l0, ClipperLib::IntPoint &l1)
+{
+	fl_t dx = l1.X - l0.X, dy = l1.Y - l0.Y;
+	fl_t len = dx * dx + dy * dy;
+	if (len == 0.0)
+		return distance_to_point(p, l0);
+	/* Project p onto the line parameterized as l0 + t(l1 - l0) */
+	fl_t t = ((p.X - l0.X) * dx + (p.Y - l0.Y) * dy) / len;
+	if (t < 0.0)  /* Falls beyond the first point */
+		return distance_to_point(p, l0);
+	else if (t > 1.0) /* Falls beyond the second point */
+		return distance_to_point(p, l1);
+	ClipperLib::IntPoint proj(l0.X + t * dx, l0.Y + t * dy);
+	return distance_to_point(p, proj);
+}
+
+/* Note: epsilon is in scaled units */
+static ClipperLib::Path rdp_simplify_path(ClipperLib::Path &p, double epsilon)
+{
+	ClipperLib::Path res;
+	fl_t max_dist = 0.0;
+	size_t index = 0;
+	for (size_t i = 1; i < p.size(); ++i) {
+		fl_t dist = distance_to_line(p[i], p.front(), p.back());
+		if (dist > max_dist) {
+			index = i;
+			max_dist = dist;
+		}
+	}
+	if (max_dist > epsilon) {
+		ClipperLib::Path set, r;
+		set.insert(set.end(), p.begin(), p.begin() + index + 1);
+		r = rdp_simplify_path(set, epsilon);
+		res.insert(res.end(), r.begin(), r.end() - 1);
+
+		set.clear();
+		set.insert(set.end(), p.begin() + index, p.end());
+		r = rdp_simplify_path(set, epsilon);
+		res.insert(res.end(), r.begin(), r.end());
+	}
+	else {
+		res.push_back(p.front());
+		res.push_back(p.back());
+	}
+	return res;
+}
+
+static void rdp_simplify_paths(ClipperLib::Paths &paths, double epsilon)
+{
+	for (ClipperLib::Path &p : paths)
+		p = rdp_simplify_path(p, epsilon);
+}
+
 static void generate_outlines(struct slice *slice, ssize_t slice_index)
 {
 	ssize_t i;
@@ -998,7 +1057,8 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 			ClipperLib::Path poly;
 			LIST_FOREACH(&oseg, s)
 				poly.push_back(FL_T_TO_INTPOINT(s->x[0], s->y[0]));
-			ClipperLib::CleanPolygon(poly, CLEAN_DIST);
+			if (SIMPLIFY_EPSILON > 0.0)
+				poly = rdp_simplify_path(poly, SIMPLIFY_EPSILON);
 			if (config.combine_all) {
 				ClipperLib::Paths polys;
 				/* Remove self-intersections */
@@ -1039,9 +1099,9 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 	else
 		co.Execute(tree, FL_T_TO_CINT(config.edge_offset + config.extra_offset));
 	generate_islands(slice, &tree);
-	if (config.clean_insets)
+	if (config.simplify_insets && SIMPLIFY_EPSILON > 0.0)
 		for (struct island &island : slice->islands)
-			ClipperLib::CleanPolygons(island.insets[0], CLEAN_DIST);
+			rdp_simplify_paths(island.insets[0], SIMPLIFY_EPSILON);
 #if USE_BOUNDING_BOX
 	for (struct island &island : slice->islands)
 		find_bounding_box(&island);
@@ -1094,13 +1154,14 @@ static void generate_insets(struct slice *slice)
 		if (config.shells > 0) {
 			for (int i = 1; i < config.shells; ++i) {
 				do_offset(island.insets[i - 1], island.insets[i], -config.extrusion_width, 1.0);
-				if (config.clean_insets)
-					ClipperLib::CleanPolygons(island.insets[i], CLEAN_DIST);
+				if (config.simplify_insets && SIMPLIFY_EPSILON > 0.0)
+					rdp_simplify_paths(island.insets[i], SIMPLIFY_EPSILON);
 				if (island.insets[i].size() == 0)  /* break if nothing is being generated */
 					goto done;
 			}
 			do_offset(island.insets[config.shells - 1], island.infill_insets, -config.extrusion_width / 2.0, 0.0);
-			ClipperLib::CleanPolygons(island.infill_insets, CLEAN_DIST);
+			if (SIMPLIFY_EPSILON > 0.0)
+				rdp_simplify_paths(island.infill_insets, SIMPLIFY_EPSILON);
 		}
 		else {
 			/* The offset distance here is not *technically* correct, but I'm not sure one can expect high dimensional accuracy when only printing infill anyway... */
@@ -1941,6 +2002,7 @@ static void append_linear_travel(struct slice *slice, struct machine *m, Clipper
 }
 
 /* FIXME: This should probably obey the retract threshold */
+/* FIXME (maybe?): This can sometimes hang if 'coarseness' is obscenely high and 'simplify_insets' is true */
 static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Paths &bounds, ClipperLib::Paths &paths, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
 {
 	if (x == m->x || y == m->y || paths.size() == 0)
@@ -2749,7 +2811,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  strict_shell_order      = %s\n", (config.strict_shell_order) ? "true" : "false");
 	fprintf(stderr, "  infill_first            = %s\n", (config.infill_first) ? "true" : "false");
 	fprintf(stderr, "  align_seams             = %s\n", (config.align_seams) ? "true" : "false");
-	fprintf(stderr, "  clean_insets            = %s\n", (config.clean_insets) ? "true" : "false");
+	fprintf(stderr, "  simplify_insets         = %s\n", (config.simplify_insets) ? "true" : "false");
 	fprintf(stderr, "  fill_inset_gaps         = %s\n", (config.fill_inset_gaps) ? "true" : "false");
 	fprintf(stderr, "  no_solid                = %s\n", (config.no_solid) ? "true" : "false");
 	fprintf(stderr, "  anchor                  = %s\n", (config.anchor) ? "true" : "false");
