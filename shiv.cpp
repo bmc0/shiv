@@ -2074,7 +2074,6 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 			append_g_move(slice, retract_move, config.retract_len);
 			m->is_retracted = true;
 		}
-		m->force_retract = false;
 		if (z == m->z && config.comb) {
 			if (slice->last_boundaries.size() > 0) {
 				/* Inside an island and moving to a point outside of it */
@@ -2115,6 +2114,7 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 		m->y = y;
 		m->z = z;
 	}
+	m->force_retract = false;
 }
 
 static bool path_len_is_greater_than(ClipperLib::Path &p, fl_t len)
