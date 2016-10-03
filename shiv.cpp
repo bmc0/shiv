@@ -2542,12 +2542,12 @@ static int write_gcode(const char *path, struct object *o)
 		fprintf(f, "; layer %zd (z = %f)\n", i, ((fl_t) i) * config.layer_height + config.layer_height);
 		if (i == config.cool_layer)
 			write_gcode_string(config.cool_on_gcode, f);
-		fl_t average_layer_time = slice->layer_time;
+		fl_t average_layer_time = slice->layer_time / feed_rate_mult;
 		for (int k = 1; k < config.layer_time_samples; ++k)
-			average_layer_time += (k < i) ? o->slices[i - k].layer_time : o->slices[0].layer_time;
+			average_layer_time += (k < i) ? o->slices[i - k].layer_time : o->slices[0].layer_time / config.first_layer_mult;
 		average_layer_time /= config.layer_time_samples;
 		if (average_layer_time < config.min_layer_time)
-			feed_rate_mult = average_layer_time / config.min_layer_time;
+			feed_rate_mult *= average_layer_time / config.min_layer_time;
 		for (struct g_move &move : slice->moves) {
 			write_gcode_move(f, &move, &export_m, feed_rate_mult, is_first_move);
 			is_first_move = false;
