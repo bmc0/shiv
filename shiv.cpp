@@ -179,6 +179,7 @@ static struct {
 	fl_t min_feed_rate           = 10.0;
 	fl_t brim_width              = 0.0;
 	int brim_lines;
+	fl_t brim_adhesion_factor    = 0.5;        /* How stuck to the object the brim is. 0 is just touching and 1 is packed as tightly as normal shells. */
 	fl_t material_density        = 0.00125;    /* Material density in <arbitrary mass unit> / <input/output unit>^3. The default is correct for PLA and millimeter input/output units */
 	fl_t material_cost           = 0.01499;    /* Material cost in <arbitrary currency> / <arbitrary mass unit>. The arbitrary mass unit must be the same as used in material_density */
 
@@ -646,6 +647,10 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "brim_width") == 0) {
 		config.brim_width = atof(value);
 		CHECK_VALUE(config.brim_width >= 0.0, "brim width", ">= 0");
+	}
+	else if (strcmp(key, "brim_adhesion_factor") == 0) {
+		config.brim_adhesion_factor = atof(value);
+		CHECK_VALUE(config.brim_adhesion_factor >= 0.0 && config.brim_adhesion_factor <= 1.0, "brim adhesion factor", "within [0, 1]");
 	}
 	else if (strcmp(key, "material_density") == 0) {
 		config.material_density = atof(value);
@@ -1582,7 +1587,7 @@ static void generate_brim(struct object *o)
 			tmp.insert(tmp.end(), o->slices[0].support_map.begin(), o->slices[0].support_map.end());
 			ClipperLib::SimplifyPolygons(tmp, ClipperLib::pftNonZero);
 		}
-		do_offset_square(tmp, tmp, config.extrusion_width * i, 1.0);
+		do_offset_square(tmp, tmp, config.extrusion_width * i + (config.edge_offset * -2.0 - config.extrusion_width) * (1.0 - config.brim_adhesion_factor) * 2.0, 1.0);
 		o->brim.insert(o->brim.end(), tmp.begin(), tmp.end());
 	}
 }
@@ -2839,7 +2844,9 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  min_layer_time          = %f\n", config.min_layer_time);
 	fprintf(stderr, "  layer_time_samples      = %d\n", config.layer_time_samples);
 	fprintf(stderr, "  min_feed_rate           = %f\n", config.min_feed_rate);
-	fprintf(stderr, "  brim_lines              = %d\n", config.brim_lines);
+	fprintf(stderr, "  brim_width              = %f\n", config.brim_width);
+	fprintf(stderr, " *brim_lines              = %d\n", config.brim_lines);
+	fprintf(stderr, "  brim_adhesion_factor    = %f\n", config.brim_adhesion_factor);
 	fprintf(stderr, "  material_density        = %f\n", config.material_density);
 	fprintf(stderr, "  material_cost           = %f\n", config.material_cost);
 #ifdef _OPENMP

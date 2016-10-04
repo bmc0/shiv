@@ -144,6 +144,7 @@ Option                    | Default value | Description
 `layer_time_samples`      |           `5` | Number of samples in the layer time moving average.
 `min_feed_rate`           |        `10.0` | Minimum feed rate.
 `brim_width`              |         `0.0` | Brim width.
+`brim_adhesion_factor`    |         `0.5` | How stuck to the object the brim is. 0 is just touching and 1 is packed as tightly as normal shells.
 `material_density`        |     `0.00125` | Material density in `arbitrary_mass_unit / input_output_unit^3`. The default is approximately correct for PLA and millimeter input/output units.
 `material_cost`           |     `0.01499` | Material cost in `arbitrary_currency / arbitrary_mass_unit`. The arbitrary mass unit must be the same as used in `material_density`.
 
