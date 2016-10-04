@@ -1577,7 +1577,7 @@ static void generate_brim(struct object *o)
 	for (int i = 1; i <= config.brim_lines; ++i) {
 		ClipperLib::Paths tmp;
 		for (struct island &island : o->slices[0].islands)
-				tmp.insert(tmp.end(), island.insets[0].begin(), island.insets[0].end());
+			tmp.insert(tmp.end(), island.insets[0].begin(), island.insets[0].end());
 		if (config.generate_support) {
 			tmp.insert(tmp.end(), o->slices[0].support_map.begin(), o->slices[0].support_map.end());
 			ClipperLib::SimplifyPolygons(tmp, ClipperLib::pftNonZero);
@@ -2243,7 +2243,7 @@ static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 {
 	while (!o->brim.empty()) {
 		size_t best = 0, start = 0;
-		find_nearest_path(o->brim, m->x, m->y, NULL, &start);
+		best = find_nearest_path(o->brim, m->x, m->y, NULL, &start);
 		generate_closed_path_moves(o->brim[best], start, &o->slices[0], NULL, m, z, config.perimeter_feed_rate);
 		o->brim.erase(o->brim.begin() + best);
 	}
