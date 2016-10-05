@@ -113,14 +113,14 @@ Option                     | Default value | Description
 `edge_overlap`             |         `0.5` | Allowable edge path overlap in units of `extrusion_width`.
 `comb`                     |       `false` | Avoid crossing boundaries.
 `strict_shell_order`       |       `false` | Always do insets in order within an island.
-`infill_first`             |       `false` | Do infill before shells.
 `align_seams`              |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
 `simplify_insets`          |        `true` | Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false)
 `fill_inset_gaps`          |        `true` | Fill gaps between shells.
 `no_solid`                 |       `false` | If true, only generate solid fill on the very top and bottom of the model.
 `anchor`                   |       `false` | Clip and anchor inset paths.
 `outside_first`            |       `false` | Prefer exterior shells.
-`solid_infill_first`       |       `false` | Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to `true` automatically if `solid_infill_feed_rate` and `sparse_infill_feed_rate` are not equal.
+`connect_solid_infill`     |       `false` | Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines.
+`solid_infill_first`       |       `false` | Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to `true` automatically if `solid_infill_feed_rate` and `sparse_infill_feed_rate` are not equal or if `connect_solid_infill` is true.
 `separate_z_travel`        |       `false` | Generate a separate z travel move instead of moving all axes together.
 `combine_all`              |       `false` | Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes.
 `generate_support`         |       `false` | Generate support structure.

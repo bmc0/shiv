@@ -147,14 +147,14 @@ static struct {
 	fl_t edge_overlap             = 0.5;        /* Allowable edge path overlap in units of extrusion_width */
 	bool comb                     = false;      /* Enable combing of travel moves */
 	bool strict_shell_order       = false;      /* Always do insets in order within an island */
-	bool infill_first             = false;      /* Do infill before shells */
 	bool align_seams              = true;       /* Align seams to the lower left corner */
 	bool simplify_insets          = true;       /* Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false) */
 	bool fill_inset_gaps          = true;       /* Fill gaps between shells */
 	bool no_solid                 = false;      /* If true, only generate solid fill on the very top and bottom of the model */
 	bool anchor                   = false;      /* Clip and anchor inset paths */
 	bool outside_first            = false;      /* Prefer exterior shells */
-	bool solid_infill_first       = false;      /* Print solid infill before sparse infill */
+	bool connect_solid_infill     = false;      /* Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines */
+	bool solid_infill_first       = false;      /* Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to true automatically if 'solid_infill_feed_rate' and 'sparse_infill_feed_rate' are not equal or if 'connect_solid_infill' is true. */
 	bool separate_z_travel        = false;      /* Generate a separate z travel move instead of moving all axes together */
 	bool combine_all              = false;      /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
 	bool generate_support         = false;      /* Generate support structure */
@@ -541,9 +541,6 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "strict_shell_order") == 0) {
 		config.strict_shell_order = PARSE_BOOL(value);
 	}
-	else if (strcmp(key, "infill_first") == 0) {
-		config.infill_first = PARSE_BOOL(value);
-	}
 	else if (strcmp(key, "align_seams") == 0) {
 		config.align_seams = PARSE_BOOL(value);
 	}
@@ -561,6 +558,9 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	}
 	else if (strcmp(key, "outside_first") == 0) {
 		config.outside_first = PARSE_BOOL(value);
+	}
+	else if (strcmp(key, "connect_solid_infill") == 0) {
+		config.connect_solid_infill = PARSE_BOOL(value);
 	}
 	else if (strcmp(key, "solid_infill_first") == 0) {
 		config.solid_infill_first = PARSE_BOOL(value);
@@ -959,6 +959,16 @@ static fl_t distance_to_line(ClipperLib::IntPoint &p, ClipperLib::IntPoint &l0, 
 		return distance_to_point(p, l1);
 	ClipperLib::IntPoint proj(l0.X + t * dx, l0.Y + t * dy);
 	return distance_to_point(p, proj);
+}
+
+static fl_t perpendicular_distance_to_line(ClipperLib::IntPoint &p, ClipperLib::IntPoint &l0, ClipperLib::IntPoint &l1)
+{
+	fl_t dx = l1.X - l0.X, dy = l1.Y - l0.Y;
+	fl_t len = dx * dx + dy * dy;
+	if (len == 0.0)
+		return distance_to_point(p, l0);
+	fl_t n = dx * (fl_t) (l0.Y - p.Y) - (fl_t) (l0.X - p.X) * dy;
+	return fabs(n) / sqrt(len);
 }
 
 /* Note: epsilon is in scaled units */
@@ -1935,7 +1945,7 @@ static size_t find_nearest_point(ClipperLib::Path &p, ClipperLib::cInt x, Clippe
 		}
 	}
 	if (r_dist)
-		*r_dist = best_dist;
+		*r_dist = sqrt(best_dist);
 	return best;
 }
 
@@ -1956,7 +1966,7 @@ static size_t find_nearest_path(ClipperLib::Paths &p, ClipperLib::cInt x, Clippe
 		}
 	}
 	if (r_dist)
-		*r_dist = best_dist;
+		*r_dist = sqrt(best_dist);
 	if (r_start)
 		*r_start = start;
 	return best;
@@ -1976,7 +1986,7 @@ static size_t find_nearest_aligned_path(ClipperLib::Paths &p, ClipperLib::cInt x
 		}
 	}
 	if (r_dist)
-		*r_dist = best_dist;
+		*r_dist = sqrt(best_dist);
 	return best;
 }
 
@@ -2003,7 +2013,7 @@ static size_t find_nearest_segment(ClipperLib::Paths &p, ClipperLib::cInt x, Cli
 		}
 	}
 	if (r_dist)
-		*r_dist = best_dist;
+		*r_dist = sqrt(best_dist);
 	if (r_flip)
 		*r_flip = flip;
 	return best;
@@ -2466,6 +2476,73 @@ static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct is
 	}
 }
 
+static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, ClipperLib::cInt z)
+{
+	if (lines.empty())
+		return;
+	const fl_t p_dist_fudge = config.extrusion_width / 8.0;
+	bool flip_points;
+	size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
+	ClipperLib::Path line0 = lines[best];
+	lines.erase(lines.begin() + best);
+	if (flip_points)
+		std::swap(line0[0], line0[1]);
+	linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+	while (!lines.empty()) {
+		fl_t best_dist;
+		best = find_nearest_segment(lines, line0[1].X, line0[1].Y, &best_dist, &flip_points);
+		ClipperLib::Path line1 = lines[best];
+		lines.erase(lines.begin() + best);
+		if (flip_points)
+			std::swap(line1[0], line1[1]);
+		bool crosses_boundary = false;
+		for (ClipperLib::Path &bound : island->boundaries) {
+			if (get_boundary_crossing(bound, line0[0], line0[1]) >= 0
+					|| get_boundary_crossing(bound, line0[1], line1[0]) >= 0
+					/* || crosses_exposed_surface(m, island, line1[0].X, line1[0].Y) */) {
+				crosses_boundary = true;
+				m->force_retract = true;
+				break;
+			}
+		}
+		fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
+		bool opposite_x_dirs = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X));  /* NOTE: This needs to be changed if the infill runs vertically. */
+		fl_t shortening_dist = best_dist / p_dist * config.extrusion_width / 2.0;
+		if (!crosses_boundary
+				&& opposite_x_dirs
+				&& p_dist < config.extrusion_width + p_dist_fudge && p_dist > config.extrusion_width - p_dist_fudge
+				&& best_dist < config.extrusion_width * 2.0
+				&& distance_to_point(line0[0], line0[1]) / config.scale_constant > shortening_dist
+				&& distance_to_point(line1[0], line1[1]) / config.scale_constant > shortening_dist) {
+			/* shorten line0 */
+			fl_t xv = line0[1].X - line0[0].X;
+			fl_t yv = line0[1].Y - line0[0].Y;
+			fl_t norm = sqrt(xv * xv + yv * yv);
+			line0[1].X -= shortening_dist * config.scale_constant * (xv / norm);
+			line0[1].Y -= shortening_dist * config.scale_constant * (yv / norm);
+			/* shorten line1 */
+			xv = line1[0].X - line1[1].X;
+			yv = line1[0].Y - line1[1].Y;
+			norm = sqrt(xv * xv + yv * yv);
+			line1[0].X -= shortening_dist * config.scale_constant * (xv / norm);
+			line1[0].Y -= shortening_dist * config.scale_constant * (yv / norm);
+			/* extrude line0 */
+			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+			/* extrude connection */
+			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+		}
+		else {
+			/* extrude line0 */
+			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+			/* travel to line1 start */
+			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+		}
+		line0 = line1;
+	}
+	/* extrude last line */
+	linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+}
+
 static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num, struct machine *m)
 {
 	ClipperLib::cInt z = FL_T_TO_CINT(((fl_t) layer_num) * config.layer_height + config.layer_height + config.object_z_extra);
@@ -2492,22 +2569,17 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 			}
 		}
 		struct island &island = slice->islands[best];
+		plan_insets(slice, &island, m, z, config.outside_first || layer_num == 0);
 		if (!config.solid_infill_first) {
 			/* Concat sparse infill into solid infill vector so the infill pathing is planned together */
 			island.solid_infill.insert(island.solid_infill.end(), island.sparse_infill.begin(), island.sparse_infill.end());
+			FREE_VECTOR(island.sparse_infill);
 		}
-		if (config.infill_first && layer_num != 0) {
+		if (config.connect_solid_infill)
+			plan_connected_solid_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
+		else
 			plan_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
-			if (config.solid_infill_first)
-				plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, z);
-			plan_insets(slice, &island, m, z, config.outside_first || layer_num == 0);
-		}
-		else {
-			plan_insets(slice, &island, m, z, config.outside_first || layer_num == 0);
-			plan_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
-			if (config.solid_infill_first)
-				plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, z);
-		}
+		plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, z);
 		free(island.insets);
 		free(island.inset_gaps);
 		if (config.comb) {
@@ -2869,7 +2941,7 @@ int main(int argc, char *argv[])
 	config.travel_feed_rate = GET_FEED_RATE(config.travel_feed_rate, config.feed_rate);
 	config.moving_retract_speed = GET_FEED_RATE(config.moving_retract_speed, config.retract_speed);
 	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);
-	if (config.solid_infill_feed_rate != config.sparse_infill_feed_rate)
+	if (config.solid_infill_feed_rate != config.sparse_infill_feed_rate || config.connect_solid_infill)
 		config.solid_infill_first = true;
 
 	fprintf(stderr, "configuration:\n");
@@ -2926,13 +2998,13 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  edge_overlap             = %f\n", config.edge_overlap);
 	fprintf(stderr, "  comb                     = %s\n", (config.comb) ? "true" : "false");
 	fprintf(stderr, "  strict_shell_order       = %s\n", (config.strict_shell_order) ? "true" : "false");
-	fprintf(stderr, "  infill_first             = %s\n", (config.infill_first) ? "true" : "false");
 	fprintf(stderr, "  align_seams              = %s\n", (config.align_seams) ? "true" : "false");
 	fprintf(stderr, "  simplify_insets          = %s\n", (config.simplify_insets) ? "true" : "false");
 	fprintf(stderr, "  fill_inset_gaps          = %s\n", (config.fill_inset_gaps) ? "true" : "false");
 	fprintf(stderr, "  no_solid                 = %s\n", (config.no_solid) ? "true" : "false");
 	fprintf(stderr, "  anchor                   = %s\n", (config.anchor) ? "true" : "false");
 	fprintf(stderr, "  outside_first            = %s\n", (config.outside_first) ? "true" : "false");
+	fprintf(stderr, "  connect_solid_infill     = %s\n", (config.connect_solid_infill) ? "true" : "false");
 	fprintf(stderr, "  solid_infill_first       = %s\n", (config.solid_infill_first) ? "true" : "false");
 	fprintf(stderr, "  separate_z_travel        = %s\n", (config.separate_z_travel) ? "true" : "false");
 	fprintf(stderr, "  combine_all              = %s\n", (config.combine_all) ? "true" : "false");
