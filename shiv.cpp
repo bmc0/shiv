@@ -2973,6 +2973,9 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "OpenMP enabled\n");
 #endif
 
+	if (config.edge_width <= config.extrusion_width)
+		fprintf(stderr, "WARNING: edge_width <= extrusion_width: packing_density should be increased\n");
+
 	fprintf(stderr, "load object...\n");
 	if (read_binary_stl(&o, path)) {
 		fprintf(stderr, "error: failed to read stl: %s: %s\n", path, strerror(errno));
