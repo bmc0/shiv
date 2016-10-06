@@ -1526,7 +1526,7 @@ static void extend_support_downward(struct object *o, ClipperLib::PolyNode *n, s
 	for (k = slice_index; k >= 0; --k) {
 		ClipperLib::Clipper c;
 		c.AddPaths(p, ClipperLib::ptSubject, true);
-		for (ssize_t i = (k >= config.support_vert_margin) ? -config.support_vert_margin : -k; k + i <= slice_index && i <= config.support_vert_margin; ++i)
+		for (ssize_t i = (k >= config.support_vert_margin) ? -config.support_vert_margin : -k; k + i <= o->n_slices && i <= config.support_vert_margin; ++i)
 			c.AddPaths(o->slices[k + i].support_boundaries, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctDifference, clipped_paths[k], ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		if (clipped_paths[k].size() == 0)
