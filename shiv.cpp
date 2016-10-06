@@ -167,6 +167,7 @@ static struct {
 	fl_t offset_miter_limit       = 2.0;
 	fl_t offset_arc_tolerance     = 5.0;
 	fl_t fill_threshold           = 0.5;        /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
+	fl_t connected_infill_overlap = 0.0;        /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
 	fl_t support_angle            = 70.0;       /* Angle threshold for support */
 	fl_t support_margin           = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin       = 1;          /* Vertical spacing between support and model, in layers */
@@ -614,6 +615,10 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "fill_threshold") == 0) {
 		config.fill_threshold = atof(value);
 		CHECK_VALUE(config.fill_threshold >= 0.0, "fill threshold", ">= 0");
+	}
+	else if (strcmp(key, "connected_infill_overlap") == 0) {
+		config.connected_infill_overlap = atof(value);
+		CHECK_VALUE(config.connected_infill_overlap >= 0.0 && config.connected_infill_overlap <= 0.5, "connected infill overlap", "within [0, 0.5]");
 	}
 	else if (strcmp(key, "support_angle") == 0) {
 		config.support_angle = atof(value);
@@ -2507,7 +2512,7 @@ static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *
 		}
 		fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
 		bool opposite_x_dirs = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X));  /* NOTE: This needs to be changed if the infill runs vertically. */
-		fl_t shortening_dist = best_dist / p_dist * config.extrusion_width / 2.0;
+		fl_t shortening_dist = best_dist / p_dist * (config.extrusion_width - config.extrusion_width * config.connected_infill_overlap * 2.0) / 2.0;
 		if (!crosses_boundary
 				&& opposite_x_dirs
 				&& p_dist < config.extrusion_width + p_dist_fudge && p_dist > config.extrusion_width - p_dist_fudge
@@ -2529,7 +2534,7 @@ static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *
 			/* extrude line0 */
 			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
 			/* extrude connection */
-			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, feed_rate, 1.0 - config.connected_infill_overlap * 2.0, true, false, true);
 		}
 		else {
 			/* extrude line0 */
@@ -3018,6 +3023,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  offset_miter_limit       = %f\n", config.offset_miter_limit);
 	fprintf(stderr, "  offset_arc_tolerance     = %f\n", config.offset_arc_tolerance);
 	fprintf(stderr, "  fill_threshold           = %f\n", config.fill_threshold);
+	fprintf(stderr, "  connected_infill_overlap = %f\n", config.connected_infill_overlap);
 	fprintf(stderr, "  support_angle            = %f\n", config.support_angle);
 	fprintf(stderr, "  support_margin           = %f\n", config.support_margin);
 	fprintf(stderr, "  support_vert_margin      = %d\n", config.support_vert_margin);
