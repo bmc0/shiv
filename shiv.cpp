@@ -30,9 +30,9 @@
 #include "misc_defs.h"
 #include "list.h"
 
-#define SIMPLIFY_EPSILON           (config.coarseness * config.scale_constant)
-#define USE_BOUNDING_BOX           1
-#define SHIV_DEBUG                 1
+#define SIMPLIFY_EPSILON  (config.coarseness * config.scale_constant)
+#define USE_BOUNDING_BOX  1
+#define SHIV_DEBUG        1
 typedef double fl_t;
 
 #define MINIMUM(a, b) (((a) < (b)) ? (a) : (b))
@@ -130,7 +130,7 @@ static struct {
 	fl_t coast_len                = 0.0;        /* Length to coast (move with the extruder turned off) at the end of a shell */
 	fl_t retract_len              = 1.0;
 	fl_t retract_speed            = 20.0;
-	fl_t moving_retract_speed     = -0.5;       /* Retrect speed when doing non-stationary retracts. If set to a value slightly lower than the E-axis jerk, the toolhead should not slow down while doing the retract. A negative value means a multiple of 'retract_speed'. */
+	fl_t moving_retract_speed     = -0.5;       /* Retrect speed when doing non-stationary retracts. A negative value means a multiple of 'retract_speed'. */
 	fl_t restart_speed            = -1.0;       /* A negative value means a multiple of 'retract_speed' */
 	fl_t retract_min_travel       = 10.0;       /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold        = 30.0;       /* Unconditional retraction threshold */
@@ -2349,6 +2349,7 @@ static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 		generate_closed_path_moves(o->brim[best], start, &o->slices[0], NULL, m, z, config.perimeter_feed_rate);
 		o->brim.erase(o->brim.begin() + best);
 	}
+	m->force_retract = true;
 }
 
 static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct machine *m, ClipperLib::cInt z, fl_t min_len, fl_t connect_threshold, fl_t flow_adjust, fl_t feed_rate)
@@ -2623,6 +2624,7 @@ static void plan_raft(struct object *o, struct slice *slice, struct machine *m)
 		z = FL_T_TO_CINT(config.raft_base_layer_height + config.layer_height * i);
 		plan_support(slice, lines, m, z, config.extrusion_width * 2.0, config.extrusion_width * 1.9, flow_adjust, feed_rate);
 	}
+	m->force_retract = true;
 }
 
 static void write_gcode_string(const char *s, FILE *f)
