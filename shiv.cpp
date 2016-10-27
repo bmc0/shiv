@@ -1236,9 +1236,9 @@ static void generate_insets(struct slice *slice)
 			do_offset(island.infill_insets, island.solid_infill_clip, config.solid_infill_clip_offset, 0.0);
 		else
 			island.solid_infill_clip = island.infill_insets;
+		do_offset(island.insets[0], island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
 		if (config.comb) {
 			island.comb_paths = island.insets[0];
-			do_offset(island.comb_paths, island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
 			do_offset(island.outer_boundaries, island.outer_comb_paths, config.extrusion_width / 8.0, 0.0);
 		}
 		if (config.shells > 1 && config.fill_inset_gaps) {
@@ -2373,11 +2373,13 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 			bool crosses_boundary = false;
 			if (!first) {
 				ClipperLib::IntPoint p0(m->x, m->y);
-				for (ClipperLib::Path &bound : slice->support_boundaries) {
-					if (get_boundary_crossing(bound, last_line[0], last_line[1]) >= 0 || get_boundary_crossing(bound, p0, (flip_points) ? p[1] : p[0]) >= 0) {
-						crosses_boundary = true;
-						m->force_retract = true;
-						break;
+				for (struct island &island : slice->islands) {
+					for (ClipperLib::Path &bound : island.outer_boundaries) {
+						if (get_boundary_crossing(bound, last_line[0], last_line[1]) >= 0 || get_boundary_crossing(bound, p0, (flip_points) ? p[1] : p[0]) >= 0) {
+							crosses_boundary = true;
+							m->force_retract = true;
+							break;
+						}
 					}
 				}
 			}
