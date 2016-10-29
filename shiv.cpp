@@ -1688,7 +1688,7 @@ static void slice_object(struct object *o)
 {
 	std::chrono::time_point<std::chrono::high_resolution_clock> start;
 	ssize_t i;
-	o->n_slices = (ssize_t) ceil(o->h / config.layer_height);
+	o->n_slices = (ssize_t) ceil((o->c.z + o->h / 2.0) / config.layer_height);
 	o->slices = (struct slice *) calloc(o->n_slices, sizeof(struct slice));
 	if (!o->slices)
 		die(e_nomem, 2);
@@ -3077,7 +3077,7 @@ int main(int argc, char *argv[])
 
 	fprintf(stderr, "scale and translate object...\n");
 	scale_object(&o, config.xy_scale_factor * scale_factor, config.xy_scale_factor * scale_factor, config.z_scale_factor * scale_factor);
-	translate_object(&o, -o.c.x + config.x_center, -o.c.y + config.y_center, o.h / 2 - o.c.z - z_chop);
+	translate_object(&o, -o.c.x + config.x_center, -o.c.y + config.y_center, o.h / 2.0 - o.c.z - z_chop);
 	fprintf(stderr, "  center   = (%f, %f, %f)\n", o.c.x, o.c.y, o.c.z);
 	fprintf(stderr, "  height   = %f\n", o.h);
 	fprintf(stderr, "  width    = %f\n", o.w);
