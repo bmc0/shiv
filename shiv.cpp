@@ -2835,7 +2835,7 @@ int main(int argc, char *argv[])
 			do_preview = true;
 			break;
 		case 'o':
-			output_path = strdup(optarg);
+			output_path = optarg;
 			break;
 		case 'c':
 			ret = read_config(optarg);
