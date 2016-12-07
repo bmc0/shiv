@@ -1,7 +1,7 @@
 ### Start/end gcode for left extruder
 start_gcode=
-	M140 S%b          ; set bed temp
-	M104 S%t T1       ; set hotend temp
+	M140 S{bed_temp}  ; set bed temp
+	M104 S{temp} T1   ; set hotend temp
 	G90               ; absolute positioning
 	G28               ; home all axes
 	M132 X Y Z A B    ; recall stored home axes
@@ -15,7 +15,7 @@ start_gcode=
 	M108 T1           ; tool change
 	G1 E5.0 F200      ; prime extruder
 	G92 E0.0
-	G1 E-%R F1800     ; do retract
+	G1 E-{retract_len} F{retract_speed} ; do retract
 	G92 E0.0
 end_gcode=
 	M104 S0 T1        ; zero temps

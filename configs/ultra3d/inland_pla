@@ -7,8 +7,8 @@ seam_packing_density=0.95
 material_diameter=1.735
 retract_len=0.9
 retract_speed=20
-temp=220
-bed_temp=65
+gcode_variable=temp=220
+gcode_variable=bed_temp=65
 cool_layer=2
 min_layer_time=8
 min_feed_rate=2

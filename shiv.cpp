@@ -142,8 +142,6 @@ static struct {
 	char *end_gcode               = NULL;
 	char *cool_on_gcode           = NULL;       /* Set in main() */
 	char *cool_off_gcode          = NULL;       /* Set in main() */
-	fl_t temp                     = 220.0;      /* Hotend temperature */
-	fl_t bed_temp                 = 65.0;
 	fl_t edge_overlap             = 0.5;        /* Allowable edge path overlap in units of extrusion_width */
 	bool comb                     = false;      /* Enable combing of travel moves */
 	bool strict_shell_order       = false;      /* Always do insets in order within an island */
@@ -191,6 +189,8 @@ static struct {
 	int raft_interface_layers     = 1;          /* Number of solid interface layers. */
 	fl_t material_density         = 0.00125;    /* Material density in <arbitrary mass unit> / <input/output unit>^3. The default is correct for PLA and millimeter input/output units */
 	fl_t material_cost            = 0.01499;    /* Material cost in <arbitrary currency> / <arbitrary mass unit>. The arbitrary mass unit must be the same as used in material_density */
+
+	std::vector<struct user_var> user_vars;     /* User-set variables */
 
 	/* internal stuff */
 	fl_t xy_extra                 = 0.0;        /* Extra xy size (brim, raft, extra_offset, support_xy_expansion, etc...). */
@@ -275,6 +275,10 @@ struct machine {
 	ClipperLib::cInt x, y, z;
 	fl_t e, feed_rate;
 	bool is_retracted, force_retract;
+};
+
+struct user_var {
+	char *key, *value;
 };
 
 static void die(const char *s, int r)
@@ -526,12 +530,6 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 		free(config.cool_off_gcode);
 		config.cool_off_gcode = strdup(value);
 	}
-	else if (strcmp(key, "temp") == 0) {
-		config.temp = atof(value);
-	}
-	else if (strcmp(key, "bed_temp") == 0) {
-		config.bed_temp = atof(value);
-	}
 	else if (strcmp(key, "edge_overlap") == 0) {
 		config.edge_overlap = atof(value);
 		CHECK_VALUE(config.edge_overlap >= 0.0 && config.edge_overlap <= 1.0, "edge overlap", "within [0, 1]");
@@ -706,6 +704,20 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 	else if (strcmp(key, "material_cost") == 0) {
 		config.material_cost = atof(value);
 		CHECK_VALUE(config.material_cost >= 0.0, "material cost", ">= 0");
+	}
+	else if (strncmp(key, "gcode_variable", 14) == 0) {
+		char *s = strdup(value);
+		struct user_var uv;
+		uv.value = isolate(s, '=');
+		uv.key = s;
+		for (auto it = config.user_vars.begin(); it != config.user_vars.end(); ++it) {
+			if (strcmp(it->key, uv.key) == 0) {
+				free(it->key);
+				config.user_vars.erase(it);
+				break;
+			}
+		}
+		config.user_vars.push_back(uv);
 	}
 	else if (path) {
 		fprintf(stderr, "error: line %d in %s: invalid option: %s\n", n, path, key);
@@ -2634,26 +2646,38 @@ static void plan_raft(struct object *o, struct slice *slice, struct machine *m)
 	m->force_retract = true;
 }
 
-static void write_gcode_string(const char *s, FILE *f)
+static void write_gcode_string(const char *s, FILE *f, bool is_user_var)
 {
 	bool line_start = true;
 	if (!s || strlen(s) == 0)
 		return;
 	while (*s) {
-		if (*s == '%') {
-			switch (*(++s)) {
-			case 't':
-				fprintf(f, "%.1f", config.temp);
-				break;
-			case 'b':
-				fprintf(f, "%.1f", config.bed_temp);
-				break;
-			case 'R':
-				fprintf(f, "%.5f", config.retract_len);
-				break;
-			case '%':
-				fputc('%', f);
-				break;
+		if (!is_user_var && *s == '{') {
+			const char *end_brace = strchr(s, '}');
+			if (end_brace && *(++s) != '\0') {
+				if (strncmp(s, "retract_len", end_brace - s) == 0)
+					fprintf(f, "%.5f", config.retract_len);
+				else if (strncmp(s, "retract_speed", end_brace - s) == 0)
+					fprintf(f, "%ld", (lround(config.retract_speed * 60.0) < 1) ? 1 : lround(config.retract_speed * 60.0));
+				else if (strncmp(s, "restart_speed", end_brace - s) == 0)
+					fprintf(f, "%ld", (lround(config.restart_speed * 60.0) < 1) ? 1 : lround(config.restart_speed * 60.0));
+				else if (strncmp(s, "travel_feed_rate", end_brace - s) == 0)
+					fprintf(f, "%ld", (lround(config.travel_feed_rate * 60.0) < 1) ? 1 : lround(config.travel_feed_rate * 60.0));
+				else {
+					for (auto it = config.user_vars.begin(); it != config.user_vars.end(); ++it) {
+						if (strncmp(s, it->key, end_brace - s) == 0) {
+							write_gcode_string(it->value, f, true);
+							goto found_var;
+						}
+					}
+					fprintf(stderr, "warning: variable not found: %.*s\n", (int) (end_brace - s), s);
+					found_var:;
+				}
+				s = end_brace;
+			}
+			else {
+				fprintf(stderr, "error: syntax: expected '}'\n");
+				fputc('{', f);
 			}
 		}
 		else if (*s == '\n') {
@@ -2667,7 +2691,8 @@ static void write_gcode_string(const char *s, FILE *f)
 		}
 		++s;
 	}
-	fputc('\n', f);
+	if (!is_user_var)
+		fputc('\n', f);
 }
 
 static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl_t feed_rate_mult, bool force_xyz)
@@ -2725,7 +2750,7 @@ static int write_gcode(const char *path, struct object *o)
 	fl_t total_e = 0.0;
 	fl_t feed_rate_mult = config.first_layer_mult;
 	fprintf(stderr, "plan moves and write gcode to %s...", path);
-	write_gcode_string(config.start_gcode, f);
+	write_gcode_string(config.start_gcode, f, false);
 	if (config.generate_raft) {
 		struct slice raft_dummy_slice;
 		plan_raft(o, &raft_dummy_slice, &plan_m);
@@ -2740,7 +2765,7 @@ static int write_gcode(const char *path, struct object *o)
 		plan_moves(o, slice, i, &plan_m);
 		fprintf(f, "; layer %zd (z = %f)\n", i, ((fl_t) i) * config.layer_height + config.layer_height + config.object_z_extra);
 		if (i == config.cool_layer)
-			write_gcode_string(config.cool_on_gcode, f);
+			write_gcode_string(config.cool_on_gcode, f, false);
 		fl_t average_layer_time = slice->layer_time / feed_rate_mult;
 		for (int k = 1; k < config.layer_time_samples; ++k)
 			average_layer_time += (k < i) ? o->slices[i - k].layer_time : o->slices[0].layer_time / config.first_layer_mult;
@@ -2762,8 +2787,8 @@ static int write_gcode(const char *path, struct object *o)
 		struct g_move retract_move = { export_m.x, export_m.y, export_m.z, -config.retract_len, config.retract_speed, false, false, false };
 		write_gcode_move(f, &retract_move, &export_m, feed_rate_mult, false);
 	}
-	write_gcode_string(config.cool_off_gcode, f);
-	write_gcode_string(config.end_gcode, f);
+	write_gcode_string(config.cool_off_gcode, f, false);
+	write_gcode_string(config.end_gcode, f, false);
 	fputs(" done\n", stderr);
 	fl_t mass = config.material_area * total_e * config.material_density / config.flow_multiplier;
 	fprintf(f, "; material length = %.4f\n", total_e / config.flow_multiplier);
@@ -3007,8 +3032,6 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "  moving_retract           = %s\n", (config.moving_retract) ? "true" : "false");
 	fprintf(stderr, "  extra_restart_len        = %f\n", config.extra_restart_len);
 	fprintf(stderr, "  cool_layer               = %d\n", config.cool_layer);
-	fprintf(stderr, "  temp                     = %f\n", config.temp);
-	fprintf(stderr, "  bed_temp                 = %f\n", config.bed_temp);
 	fprintf(stderr, "  edge_overlap             = %f\n", config.edge_overlap);
 	fprintf(stderr, "  comb                     = %s\n", (config.comb) ? "true" : "false");
 	fprintf(stderr, "  strict_shell_order       = %s\n", (config.strict_shell_order) ? "true" : "false");

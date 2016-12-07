@@ -104,12 +104,10 @@ Option                     | Default value | Description
 `moving_retract`           |       `false` | Do a non-stationary retraction at the end of each shell.
 `extra_restart_len`        |         `0.0` | Extra material length on restart.
 `cool_layer`               |           `1` | Turn on part cooling at this layer (numbered from zero). Set to a negative number to disable cooling.
-`start_gcode`              |        `NULL` | Prepend this G-code to beginning of the output file.
-`end_gcode`                |        `NULL` | Append this G-code to the end of the output file.
+`start_gcode`              |        `None` | Prepend this G-code to beginning of the output file.
+`end_gcode`                |        `None` | Append this G-code to the end of the output file.
 `cool_on_gcode`            |   `M106 S255` | G-code to turn on cooling.
 `cool_off_gcode`           |        `M107` | G-code to turn off cooling.
-`temp`                     |       `220.0` | Hotend temperature.
-`bed_temp`                 |        `65.0` | Bed temperature.
 `edge_overlap`             |         `0.5` | Allowable edge path overlap in units of `extrusion_width`.
 `comb`                     |       `false` | Avoid crossing boundaries.
 `strict_shell_order`       |       `false` | Always do insets in order within an island.
@@ -155,19 +153,20 @@ Option                     | Default value | Description
 `raft_interface_layers`    |           `1` | Number of solid interface layers.
 `material_density`         |     `0.00125` | Material density in `arbitrary_mass_unit / input_output_unit^3`. The default is approximately correct for PLA and millimeter input/output units.
 `material_cost`            |     `0.01499` | Material cost in `arbitrary_currency / arbitrary_mass_unit`. The arbitrary mass unit must be the same as used in `material_density`.
+`gcode_variable`           |        `None` | Set a variable that can be expanded within a G-code string option (see "G-code variables" below).
 
-#### Variables:
+#### G-code variables:
 
-These variables are expanded to the value of the specified option in any G-code
-string option (such as `start_gcode`). Prefix with a `%`.
+Variables set with the `gcode_variable` option can be expanded by enclosing the
+variable name in curly braces: `{variable_name}`. If the variable does not
+exist, it will expand to an empty string.
 
-Variable | Option
----------|-------
-`t`      | `temp`
-`b`      | `bed_temp`
-`R`      | `retract_len`
+The following options can also be expanded:
 
-Use `%%` for a literal `%`.
+* `retract_len`
+* `retract_speed`
+* `restart_speed`
+* `travel_feed_rate`
 
 #### Configuration files:
 
@@ -178,41 +177,43 @@ previous line (except for comment lines).
 Example:
 
 	### Generic printer configuration
+	x_center=100
+	y_center=100
 	extrusion_width=0.4
-	perimeter_feed_rate=25
-	loop_feed_rate=40
-	infill_feed_rate=40
+	feed_rate=60
 	travel_feed_rate=120
 	first_layer_mult=0.5
 	cool_on_gcode=M106 S255
 	cool_off_gcode=M106 S0
 	start_gcode=
-		G21            ; Metric
-		G90            ; Absolute positioning
-		M82            ; Absolute extruder position
-		G28 X0 Y0      ; Home X and Y
-		G28 Z0         ; Home Z
+		G21              ; Metric
+		G90              ; Absolute positioning
+		M82              ; Absolute extruder position
+		G28 X0 Y0        ; Home X and Y
+		G28 Z0           ; Home Z
 		G1 Z20.0 F3300
-		M190 S%b       ; Wait for bed to reach temp
-		M109 S%t       ; Wait for hotend to reach temp
+		M190 S{bed_temp} ; Wait for bed to reach temp
+		M109 S{temp}     ; Wait for hotend to reach temp
 		G92 E0
-		G1 E5.0 F200   ; Prime extruder
+		G1 E20.0 F100    ; Prime extruder
 		G92 E0
-		G1 E-%R F1800  ; Retract
+		G1 E-{retract_len} F{retract_speed} ; Retract
 		G92 E0
 	end_gcode=
-		M104 S0        ; Zero temps
+		M104 S0          ; Zero temps
 		M140 S0
 		G28 X0 Y0
-		M84            ; Disable steppers
+		M84              ; Disable steppers
 	xy_scale_factor=1.003
 	z_scale_factor=1.0
-	packing_density=0.99
+	packing_density=0.98
+	edge_packing_density=0.94
+	seam_packing_density=0.8
 	material_diameter=1.735
-	retract_len=0.9
+	retract_len=0.5
 	retract_speed=20
-	temp=220
-	bed_temp=65
+	gcode_variable=temp=220
+	gcode_variable=bed_temp=65
 	cool_layer=2
 	min_layer_time=10
 	min_feed_rate=5
@@ -225,7 +226,7 @@ Slice `infile.stl` and output gcode to `outfile.gcode`:
 
 Same as above, but with some options set:
 
-	shiv -o outfile.gcode -d 0.5 -n 3 -x 30 -y 30 -O min_layer_time=15 -O temp=200 infile.stl
+	shiv -o outfile.gcode -d 0.5 -n 3 -x 30 -y 30 -O min_layer_time=15 -O gcode_variable=temp=200 infile.stl
 
 Preview slices of `infile.stl` in gnuplot:
 
