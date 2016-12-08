@@ -737,7 +737,7 @@ static int read_config(const char *path)
 	if (!c)
 		return 1;
 	key = c;
-	for (ssize_t i = 1; *key != '\0'; ++i) {
+	for (ssize_t i = 1; key && *key != '\0'; ++i) {
 		next = strchr(key, '\n');
 		if (next) {
 			while (next && (next[1] == ' ' || next[1] == '\t'))
@@ -746,8 +746,10 @@ static int read_config(const char *path)
 		}
 		if (*key != '\0' && *key != '#') {
 			value = isolate(key, '=');
-			if (set_config_option(key, value, i, path))
+			if (set_config_option(key, value, i, path)) {
+				free(c);
 				return 2;
+			}
 		}
 		key = next;
 	}
