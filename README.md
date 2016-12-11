@@ -28,7 +28,7 @@ OpenMP is enabled by default for both platforms.
 
 #### Synopsis:
 
-	shiv [-hp] [-o output_path] [-c config_path] [-O option=value]
+	shiv [-hp] [-o output_path] [-c config_path] [-S setting=value]
 	     [-l layer_height] [-w extrusion_width] [-t tolerance]
 	     [-s scale_factor] [-d infill_density] [-n shells]
 	     [-r roof_thickness] [-f floor_thickness] [-b brim_width]
@@ -43,7 +43,7 @@ Flag                 | Description
 `-p`                 | Preview slices (pipe stdout to gnuplot)
 `-o output_path`     | Output gcode path
 `-c config_path`     | Configuration file path
-`-O option=value`    | Set option to value
+`-S setting=value`   | Set setting to value
 `-l layer_height`    | Layer height
 `-w extrusion_width` | Constrained extrusion width
 `-t tolerance`       | Segment connection tolerance
@@ -58,25 +58,25 @@ Flag                 | Description
 `-y y_translate`     | Translate object in the y-axis
 `-z z_chop`          | Sink object into build plate
 
-#### Full options list:
+#### Full settings list:
 
-Option                     | Default value | Description
+Setting                    | Default value | Description
 ---------------------------|--------------:|------------
 `layer_height`             |         `0.2` | Layer height.
 `tolerance`                |       `0.001` | Segment connection tolerance. Large values can be used to close holes in broken models.
 `scale_constant`           |   `1000000.0` | Clipper uses integers, so we need to scale floating point values. Precision is `1/scale_constant` units. Coordinates in the range `±4.6e+18/scale_constant` are accepted.
 `coarseness`               |        `0.01` | Approximate output coarseness. Useful for simplifying high polygon count meshes.
-`extrusion_width`          |         `0.4` | Constrained extrusion width. Should *generally* be set to a value similar to your nozzle diameter.
+`extrusion_width`          |         `0.4` | Constrained extrusion width. Should *generally* be set to a value equal to or slightly larger than the nozzle diameter.
 `xy_scale_factor`          |       `1.003` | The object is scaled by this ratio in the x and y axes to compensate for shrinkage. Around 1.003 works for PLA. ABS should be somewhere between 1.004 and 1.009.
 `z_scale_factor`           |         `1.0` | The object is scaled by this ratio in the z axis to compensate for shrinkage. Should probably be left at 1 unless a high temperature heated chamber is used.
 `x_center`                 |         `0.0` | X coordinate to center the object on.
 `y_center`                 |         `0.0` | Y coordinate to center the object on.
 `packing_density`          |        `0.98` | Solid packing density. Should be slightly less than 1. 0.98 seems to work for PLA.
 `edge_packing_density`     |        `0.95` | Packing density of the constrained half of the outer perimeter.
-`seam_packing_density`     |        `0.95` | Packing density of the ends of each shell (the seam).
+`seam_packing_density`     |        `0.89` | Packing density of the ends of each shell (the seam).
 `extra_offset`             |         `0.0` | Offset the object by this distance in the xy plane.
 `infill_density`           |         `0.2` | Sparse infill density.
-`infill_pattern`           |        `grid` | Sparse infill pattern. Legal values are `grid` and `rectilinear`.
+`infill_pattern`           | `rectilinear` | Sparse infill pattern. Legal values are `grid` and `rectilinear`.
 `shells`                   |           `2` | Number of loops/perimeters/shells (whatever you want to call them).
 `roof_thickness`           |         `0.8` | Solid surface thickness when looking upwards.
 `floor_thickness`          |         `0.8` | Solid surface thickness when looking downwards.
@@ -84,7 +84,7 @@ Option                     | Default value | Description
 `solid_fill_expansion`     |         `1.0` | Distance to expand solid infill, in units of `extrusion_width`.
 `material_diameter`        |        `1.75` | Diameter of material.
 `flow_multiplier`          |         `1.0` | Flow rate adjustment to compensate for incorrect E-steps or E-step variation between material types.
-`feed_rate`                |        `50.0` | Base feed rate. Feed rates below are actual speeds if set to a positive value, or a multiple of `feed_rate` if set to a negative value. In other words, `40` is 40 units/s, but `-0.5` is `feed_rate * 0.5` units/s.
+`feed_rate`                |        `50.0` | Base feed rate. Feed rates below are actual speeds (in units/s) if set to a positive value, or a multiple of `feed_rate` if set to a negative value. In other words, `40` is 40 units/s, but `-0.5` is `feed_rate * 0.5` units/s.
 `perimeter_feed_rate`      |        `-0.5` | Outer shell feed rate.
 `loop_feed_rate`           |        `-1.0` | Inner shell(s) feed rate.
 `infill_feed_rate`         |        `None` | Sets both `solid_infill_feed_rate` and `sparse_infill_feed_rate`.
@@ -98,18 +98,18 @@ Option                     | Default value | Description
 `retract_speed`            |        `20.0` | Retraction speed.
 `moving_retract_speed`     |        `-0.5` | Retrect speed when doing non-stationary retracts. A negative value means a multiple of `retract_speed`. 
 `restart_speed`            |        `-1.0` | Restart speed. A negative value means a multiple of `retract_speed`.
-`retract_min_travel`       |        `10.0` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
+`retract_min_travel`       |         `5.0` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
 `retract_threshold`        |        `30.0` | Unconditional retraction threshold.
 `retract_within_island`    |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
 `moving_retract`           |       `false` | Do a non-stationary retraction at the end of each shell.
 `extra_restart_len`        |         `0.0` | Extra material length on restart.
-`cool_layer`               |           `1` | Turn on part cooling at this layer (numbered from zero). Set to a negative number to disable cooling.
+`cool_layer`               |           `2` | Turn on part cooling at this layer (numbered from zero). Set to `-1` to disable cooling.
 `start_gcode`              |        `None` | Prepend this G-code to beginning of the output file.
 `end_gcode`                |        `None` | Append this G-code to the end of the output file.
 `cool_on_gcode`            |   `M106 S255` | G-code to turn on cooling.
 `cool_off_gcode`           |        `M107` | G-code to turn off cooling.
 `edge_overlap`             |         `0.5` | Allowable edge path overlap in units of `extrusion_width`.
-`comb`                     |       `false` | Avoid crossing boundaries.
+`comb`                     |        `true` | Avoid crossing boundaries.
 `strict_shell_order`       |       `false` | Always do insets in order within an island.
 `align_seams`              |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
 `simplify_insets`          |        `true` | Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false)
@@ -131,7 +131,7 @@ Option                     | Default value | Description
 `offset_miter_limit`       |         `2.0` | Sets `ClipperOffset.MiterLimit`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/MiterLimit.htm) for details.
 `offset_arc_tolerance`     |         `5.0` | Sets `ClipperOffset.ArcTolerance`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/ArcTolerance.htm) for details.
 `fill_threshold`           |         `0.5` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
-`connected_infill_overlap` |         `0.0` | Extra overlap between connected solid infill and shells in units of `extrusion_width`. Extruded volume does not change.
+`connected_infill_overlap` |        `0.25` | Extra overlap between connected solid infill and shells in units of `extrusion_width`. Extruded volume does not change.
 `support_angle`            |        `70.0` | Angle threshold for support.
 `support_margin`           |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
 `support_vert_margin`      |           `1` | Vertical spacing between support and model, in layers.
@@ -157,16 +157,9 @@ Option                     | Default value | Description
 
 #### G-code variables:
 
-Variables set with the `gcode_variable` option can be expanded by enclosing the
-variable name in curly braces: `{variable_name}`. If the variable does not
-exist, it will expand to an empty string.
-
-The following options can also be expanded:
-
-* `retract_len`
-* `retract_speed`
-* `restart_speed`
-* `travel_feed_rate`
+Variables and settings can be expanded by enclosing the variable/setting name
+in curly braces: `{name}`. If the variable/setting does not exist, it will
+expand to an empty string.
 
 #### Configuration files:
 

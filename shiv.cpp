@@ -20,6 +20,7 @@
 #include <cstring>
 #include <cerrno>
 #include <cmath>
+#include <climits>
 #include <chrono>
 #include <algorithm>
 #include <getopt.h>
@@ -35,6 +36,7 @@
 #define SHIV_DEBUG        1
 typedef double fl_t;
 
+#define LENGTH(x) (sizeof(x) / sizeof(x[0]))
 #define MINIMUM(a, b) (((a) < (b)) ? (a) : (b))
 #define MAXIMUM(a, b) (((a) > (b)) ? (a) : (b))
 #define FL_T_TO_CINT(x) ((ClipperLib::cInt) (lround((x) * config.scale_constant)))
@@ -51,7 +53,7 @@ typedef double fl_t;
 
 static const char e_nomem[] = "fatal: No memory\n";
 static const char usage_string[] =
-	"usage: shiv [-hp] [-o output_path] [-c config_path] [-O option=value]\n"
+	"usage: shiv [-hp] [-o output_path] [-c config_path] [-S setting=value]\n"
 	"            [-l layer_height] [-w extrusion_width] [-t tolerance]\n"
 	"            [-s scale_factor] [-d infill_density] [-n shells]\n"
 	"            [-r roof_thickness] [-f floor_thickness] [-b brim_width]\n"
@@ -63,7 +65,7 @@ static const char usage_string[] =
 	"  -p                    preview slices (pipe stdout to gnuplot)\n"
 	"  -o output_path        output gcode path\n"
 	"  -c config_path        configuration file path\n"
-	"  -O option=value       set option to value\n"
+	"  -S setting=value      set setting to value\n"
 	"  -l layer_height       layer height\n"
 	"  -w extrusion_width    constrained extrusion width\n"
 	"  -t tolerance          segment connection tolerance\n"
@@ -100,12 +102,12 @@ static struct {
 	fl_t y_center                 = 0.0;
 	fl_t packing_density          = 0.98;       /* Solid packing density (should be slightly less than 1; 0.98 seems to work well for PLA) */
 	fl_t edge_packing_density     = 0.95;       /* Packing density of the contranied half of the outer perimeter */
-	fl_t seam_packing_density     = 0.95;       /* Packing density of the ends of each shell (the seam) */
+	fl_t seam_packing_density     = 0.89;       /* Packing density of the ends of each shell (the seam) */
 	fl_t extra_offset             = 0.0;        /* Offset the object by this distance in the xy plane */
 	fl_t edge_offset;                           /* Offset of the outer perimeter (calculated) */
 	fl_t shell_clip;                            /* Shells are clipped by this much (calculated from seam_packing_density) */
 	fl_t infill_density           = 0.2;        /* Sparse infill density */
-	fill_pattern infill_pattern   = FILL_PATTERN_GRID;  /* Sparse infill pattern */
+	fill_pattern infill_pattern   = FILL_PATTERN_RECTILINEAR;  /* Sparse infill pattern */
 	int shells                    = 2;          /* Number of loops/perimeters/shells (whatever you want to call them) */
 	fl_t roof_thickness           = 0.8;        /* Solid surface thickness when looking upwards */
 	int roof_layers;                            /* Calculated from roof_thickness */
@@ -117,7 +119,7 @@ static struct {
 	fl_t material_diameter        = 1.75;       /* Diameter of material */
 	fl_t material_area;                         /* Cross-sectional area of filament (calculated from material_diameter) */
 	fl_t flow_multiplier          = 1.0;        /* Flow rate adjustment */
-	fl_t feed_rate                = 50.0;       /* Base feed rate */
+	fl_t feed_rate                = 50.0;       /* Base feed rate (all feed rates are in units/s) */
 	/* Feed rates below are actual speeds if set to a positive value, or a multiple of 'feed_rate' if set to a negative value.
 	   In other words, '40' is 40 units/s, but '-0.5' is feed_rate * 0.5 units/s. */
 	fl_t perimeter_feed_rate      = -0.5;       /* Outer shell feed rate */
@@ -132,18 +134,18 @@ static struct {
 	fl_t retract_speed            = 20.0;
 	fl_t moving_retract_speed     = -0.5;       /* Retrect speed when doing non-stationary retracts. A negative value means a multiple of 'retract_speed'. */
 	fl_t restart_speed            = -1.0;       /* A negative value means a multiple of 'retract_speed' */
-	fl_t retract_min_travel       = 10.0;       /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
+	fl_t retract_min_travel       = 5.0;        /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold        = 30.0;       /* Unconditional retraction threshold */
 	bool retract_within_island    = false;
 	bool moving_retract           = false;      /* Do a non-stationary retraction at the end of each shell */
 	fl_t extra_restart_len        = 0.0;        /* Extra material length on restart */
-	int cool_layer                = 1;          /* Turn on part cooling at this layer */
+	int cool_layer                = 2;          /* Turn on part cooling at this layer */
 	char *start_gcode             = NULL;
 	char *end_gcode               = NULL;
 	char *cool_on_gcode           = NULL;       /* Set in main() */
 	char *cool_off_gcode          = NULL;       /* Set in main() */
 	fl_t edge_overlap             = 0.5;        /* Allowable edge path overlap in units of extrusion_width */
-	bool comb                     = false;      /* Enable combing of travel moves */
+	bool comb                     = true;       /* Avoid crossing boundaries */
 	bool strict_shell_order       = false;      /* Always do insets in order within an island */
 	bool align_seams              = true;       /* Align seams to the lower left corner */
 	bool simplify_insets          = true;       /* Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false) */
@@ -165,7 +167,7 @@ static struct {
 	fl_t offset_miter_limit       = 2.0;
 	fl_t offset_arc_tolerance     = 5.0;
 	fl_t fill_threshold           = 0.5;        /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
-	fl_t connected_infill_overlap = 0.0;        /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
+	fl_t connected_infill_overlap = 0.25;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
 	fl_t support_angle            = 70.0;       /* Angle threshold for support */
 	fl_t support_margin           = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin       = 1;          /* Vertical spacing between support and model, in layers */
@@ -196,6 +198,136 @@ static struct {
 	fl_t xy_extra                 = 0.0;        /* Extra xy size (brim, raft, extra_offset, support_xy_expansion, etc...). */
 	fl_t object_z_extra           = 0.0;        /* Extra z offset to apply to everything but the raft on gcode export. */
 } config;
+
+enum setting_type {
+	SETTING_TYPE_FL_T,
+	SETTING_TYPE_INT,
+	SETTING_TYPE_BOOL,
+	SETTING_TYPE_FILL_PATTERN,
+	SETTING_TYPE_JOIN_TYPE,
+	SETTING_TYPE_POLY_FILL_TYPE,
+	SETTING_TYPE_STR,
+};
+
+struct setting {
+	const char *name;
+	setting_type type;
+	bool read_only, is_feed_rate;
+	union {
+		struct { int l, h; } i;
+		struct { fl_t l, h; } f;
+	} range;
+	bool range_low_eq, range_high_eq;
+	void *data;
+};
+
+#define SETTING(name, type, read_only, is_feed_rate, range_low, range_high, range_low_eq, range_high_eq) \
+	{ #name, type, read_only, is_feed_rate, range_low, range_high, range_low_eq, range_high_eq, (void *) &config.name }
+
+static const struct setting settings[] = {
+	/*      name                       type                      read_only is_feed_rate    range_low  range_high    low_eq high_eq */
+	SETTING(layer_height,              SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(tolerance,                 SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(scale_constant,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(coarseness,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(extrusion_width,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(edge_width,                SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
+	SETTING(extrusion_area,            SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
+	SETTING(xy_scale_factor,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(z_scale_factor,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(x_center,                  SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(y_center,                  SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(packing_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(edge_packing_density,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(seam_packing_density,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(extra_offset,              SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(edge_offset,               SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
+	SETTING(shell_clip,                SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
+	SETTING(infill_density,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
+	SETTING(infill_pattern,            SETTING_TYPE_FILL_PATTERN,   false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(shells,                    SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
+	SETTING(roof_thickness,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(roof_layers,               SETTING_TYPE_INT,            true,  false, { .i = { 0,         0        } }, false, false),
+	SETTING(floor_thickness,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(floor_layers,              SETTING_TYPE_INT,            true,  false, { .i = { 0,         0        } }, false, false),
+	SETTING(min_shell_contact,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(solid_infill_clip_offset,  SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
+	SETTING(solid_fill_expansion,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(material_diameter,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(material_area,             SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
+	SETTING(flow_multiplier,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(feed_rate,                 SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(perimeter_feed_rate,       SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(loop_feed_rate,            SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	/* 'infill_feed_rate' is a special case */
+	SETTING(solid_infill_feed_rate,    SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(sparse_infill_feed_rate,   SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(support_feed_rate,         SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(travel_feed_rate,          SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(first_layer_mult,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(coast_len,                 SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(retract_len,               SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(retract_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(moving_retract_speed,      SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(restart_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(retract_min_travel,        SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(retract_threshold,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(retract_within_island,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(moving_retract,            SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(extra_restart_len,         SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(cool_layer,                SETTING_TYPE_INT,            false, false, { .i = { -1,        INT_MAX  } }, true,  true),
+	SETTING(start_gcode,               SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(end_gcode,                 SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(cool_on_gcode,             SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(cool_off_gcode,            SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(edge_overlap,              SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
+	SETTING(comb,                      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(strict_shell_order,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(align_seams,               SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(simplify_insets,           SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(fill_inset_gaps,           SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(no_solid,                  SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(anchor,                    SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(outside_first,             SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(connect_solid_infill,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(solid_infill_first,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(separate_z_travel,         SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(combine_all,               SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(generate_support,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(support_everywhere,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(solid_support_base,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(connect_support_lines,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(poly_fill_type,            SETTING_TYPE_POLY_FILL_TYPE, false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(inset_join_type,           SETTING_TYPE_JOIN_TYPE,      false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(outset_join_type,          SETTING_TYPE_JOIN_TYPE,      false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(offset_miter_limit,        SETTING_TYPE_FL_T,           false, false, { .f = { 2.0,       HUGE_VAL } }, true,  false),
+	SETTING(offset_arc_tolerance,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.25,      HUGE_VAL } }, true,  false),
+	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
+	SETTING(support_angle,             SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       90.0     } }, false, false),
+	SETTING(support_margin,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),  /* FIXME: will cause problems with the combing code if set to 0 */
+	SETTING(support_vert_margin,       SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
+	SETTING(interface_layers,          SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
+	SETTING(support_xy_expansion,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(support_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(support_flow_mult,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(min_layer_time,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(layer_time_samples,        SETTING_TYPE_INT,            false, false, { .i = { 1,         INT_MAX  } }, true,  true),
+	SETTING(min_feed_rate,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(brim_width,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(brim_lines,                SETTING_TYPE_INT,            true,  false, { .i = { 0,         0        } }, false, false),
+	SETTING(brim_adhesion_factor,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
+	SETTING(generate_raft,             SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(raft_xy_expansion,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(raft_base_layer_height,    SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(raft_base_layer_width,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(raft_base_layer_density,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(raft_vert_margin,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(raft_interface_flow_mult,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(raft_interface_layers,     SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
+	SETTING(material_density,          SETTING_TYPE_FL_T,           false, false, { .f = { 0,         HUGE_VAL } }, true,  false),
+	SETTING(material_cost,             SETTING_TYPE_FL_T,           false, false, { .f = { 0,         HUGE_VAL } }, true,  false),
+};
 
 struct vertex {
 	fl_t x, y, z;
@@ -328,388 +460,142 @@ static char * get_file_contents(const char *path)
 	return NULL;
 }
 
-#define CHECK_VALUE(cond, name, strcond) \
-	if (!(cond)) { \
- 		fputs("error: " name " must be " strcond "\n", stderr); \
-		return 1; \
-	} \
-
-#define PARSE_BOOL(value) (value[0] == 't' || value[0] == 'T' || value[0] == 'y' || value[0] == 'Y' || atoi(value))
-
-static int parse_join_type(const char *s, ClipperLib::JoinType *jt)
+static const struct setting * find_config_setting(const char *key)
 {
-	if (strcmp(s, "miter") == 0)
-		*jt = ClipperLib::jtMiter;
-	else if (strcmp(s, "square") == 0)
-		*jt = ClipperLib::jtSquare;
-	else if (strcmp(s, "round") == 0)
-		*jt = ClipperLib::jtRound;
-	else
-		return 1;
-	return 0;
+	for (size_t i = 0; i < LENGTH(settings); ++i)
+		if (strcmp(key, settings[i].name) == 0)
+			return &settings[i];
+	return NULL;
 }
 
-static int set_config_option(const char *key, const char *value, int n, const char *path)
+static int set_config_setting(const char *key, const char *value, int n, const char *path)
 {
-	if (strcmp(key, "layer_height") == 0) {
-		config.layer_height = atof(value);
-		CHECK_VALUE(config.layer_height > 0.0, "layer height", "> 0");
-	}
-	else if (strcmp(key, "tolerance") == 0) {
-		config.tolerance = atof(value);
-		CHECK_VALUE(config.tolerance >= 0.0, "tolerance", ">= 0");
-	}
-	else if (strcmp(key, "scale_constant") == 0) {
-		config.scale_constant = atof(value);
-		CHECK_VALUE(config.scale_constant > 0.0, "scale_constant", "> 0");
-	}
-	else if (strcmp(key, "coarseness") == 0) {
-		config.coarseness = atof(value);
-		CHECK_VALUE(config.coarseness >= 0.0, "coarseness", ">= 0");
-	}
-	else if (strcmp(key, "extrusion_width") == 0) {
-		config.extrusion_width = atof(value);
-		CHECK_VALUE(config.extrusion_width > 0.0, "extrusion width", "> 0");
-	}
-	else if (strcmp(key, "xy_scale_factor") == 0) {
-		config.xy_scale_factor = atof(value);
-		CHECK_VALUE(config.xy_scale_factor > 0.0, "x/y scale factor", "> 0");
-	}
-	else if (strcmp(key, "z_scale_factor") == 0) {
-		config.z_scale_factor = atof(value);
-		CHECK_VALUE(config.z_scale_factor > 0.0, "z scale factor", "> 0");
-	}
-	else if (strcmp(key, "x_center") == 0) {
-		config.x_center = atof(value);
-	}
-	else if (strcmp(key, "y_center") == 0) {
-		config.y_center = atof(value);
-	}
-	else if (strcmp(key, "packing_density") == 0) {
-		config.packing_density = atof(value);
-		CHECK_VALUE(config.packing_density > 0.0 && config.packing_density <= 1.0, "packing density", "within (0, 1]");
-		if (config.packing_density < M_PI / 4)
-			fprintf(stderr, "warning: packing density probably shouldn't be < %f\n", M_PI / 4);
-	}
-	else if (strcmp(key, "edge_packing_density") == 0) {
-		config.edge_packing_density = atof(value);
-		CHECK_VALUE(config.edge_packing_density > 0.0 && config.edge_packing_density <= 1.0, "edge packing density", "within (0, 1]");
-		if (config.edge_packing_density < M_PI / 4)
-			fprintf(stderr, "warning: edge packing density probably shouldn't be < %f\n", M_PI / 4);
-	}
-	else if (strcmp(key, "seam_packing_density") == 0) {
-		config.seam_packing_density = atof(value);
-		CHECK_VALUE(config.seam_packing_density > 0.0 && config.seam_packing_density <= 1.0, "seam packing density", "within (0, 1]");
-		if (config.seam_packing_density < M_PI / 4)
-			fprintf(stderr, "warning: seam packing density probably shouldn't be < %f\n", M_PI / 4);
-	}
-	else if (strcmp(key, "extra_offset") == 0) {
-		config.extra_offset = atof(value);
-	}
-	else if (strcmp(key, "infill_density") == 0) {
-		config.infill_density = atof(value);
-		CHECK_VALUE(config.infill_density >= 0.0 && config.infill_density <= 1.0, "infill density", "within [0, 1]");
-	}
-	else if (strcmp(key, "infill_pattern") == 0) {
-		if (strcmp(value, "grid") == 0)
-			config.infill_pattern = FILL_PATTERN_GRID;
-		else if (strcmp(value, "rectilinear") == 0)
-			config.infill_pattern = FILL_PATTERN_RECTILINEAR;
-		else
-			fprintf(stderr, "error: illegal value for infill_pattern: %s\n", value);
-	}
-	else if (strcmp(key, "shells") == 0) {
-		config.shells = atoi(value);
-		CHECK_VALUE(config.shells >= 0, "number of shells", ">= 0");
-	}
-	else if (strcmp(key, "roof_thickness") == 0) {
-		config.roof_thickness = atof(value);
-		CHECK_VALUE(config.roof_thickness >= 0.0, "roof thickness", ">= 0");
-	}
-	else if (strcmp(key, "floor_thickness") == 0) {
-		config.floor_thickness = atof(value);
-		CHECK_VALUE(config.floor_thickness >= 0.0, "floor thickness", ">= 0");
-	}
-	else if (strcmp(key, "min_shell_contact") == 0) {
-		config.min_shell_contact = atof(value);
-		CHECK_VALUE(config.min_shell_contact >= 0.0, "min_shell_contact", ">= 0");
-	}
-	else if (strcmp(key, "solid_fill_expansion") == 0) {
-		config.solid_fill_expansion = atof(value);
-		CHECK_VALUE(config.solid_fill_expansion >= 0.0, "solid fill expansion", ">= 0");
-	}
-	else if (strcmp(key, "material_diameter") == 0) {
-		config.material_diameter = atof(value);
-		CHECK_VALUE(config.material_diameter > 0.0, "material diameter", "> 0");
-	}
-	else if (strcmp(key, "flow_multiplier") == 0) {
-		config.flow_multiplier = atof(value);
-		CHECK_VALUE(config.flow_multiplier >= 0.0, "flow multiplier", ">= 0");
-	}
-	else if (strcmp(key, "feed_rate") == 0) {
-		config.feed_rate = atof(value);
-		CHECK_VALUE(config.feed_rate > 0.0, "feed rate", "> 0");
-	}
-	else if (strcmp(key, "perimeter_feed_rate") == 0) {
-		config.perimeter_feed_rate = atof(value);
-	}
-	else if (strcmp(key, "loop_feed_rate") == 0) {
-		config.loop_feed_rate = atof(value);
+	char *endptr;
+	const struct setting *s = find_config_setting(key);
+	if (s) {
+		if (s->read_only) {
+			if (path) fprintf(stderr, "error: line %d in %s: setting %s is read-only\n", n, path, s->name);
+			else      fprintf(stderr, "error: setting %s is read-only\n", s->name);
+			return 1;
+		}
+		errno = 0;
+		switch(s->type) {
+		case SETTING_TYPE_FL_T:
+		case SETTING_TYPE_INT:
+			if (s->type == SETTING_TYPE_FL_T)
+				*((fl_t *) s->data) = (fl_t) strtod(value, &endptr);
+			else
+				*((int *) s->data) = strtol(value, &endptr, 10);
+			if (errno != 0) {
+				if (path) fprintf(stderr, "error: line %d in %s: %s: %s\n", n, path, strerror(errno), value);
+				else      fprintf(stderr, "error: %s: %s\n", strerror(errno), value);
+				return 1;
+			}
+			else if (endptr == value) {
+				if (path) fprintf(stderr, "error: line %d in %s: invalid input: %s\n", n, path, value);
+				else      fprintf(stderr, "error: invalid input: %s\n", value);
+				return 1;
+			}
+			else if (*endptr != '\0') {
+				if (path) fprintf(stderr, "warning: line %d in %s: trailing characters: %s\n", n, path, endptr);
+				else      fprintf(stderr, "warning: trailing characters: %s\n", endptr);
+			}
+			if (s->type == SETTING_TYPE_FL_T) {
+				if (!(((s->range_low_eq) ? *((fl_t *) s->data) >= s->range.f.l : *((fl_t *) s->data) > s->range.f.l)
+						&& ((s->range_high_eq) ? *((fl_t *) s->data) <= s->range.f.h : *((fl_t *) s->data) < s->range.f.h))) {
+					if (path) fprintf(stderr, "error: line %d in %s: %s must be ", n, path, s->name);
+					else      fprintf(stderr, "error: %s must be ", s->name);
+					if (s->range.f.l > -HUGE_VAL && s->range.f.h < HUGE_VAL)
+						fprintf(stderr, "within %c%g,%g%c\n", (s->range_low_eq) ? '[' : '(', s->range.f.l, s->range.f.h, (s->range_high_eq) ? ']' : ')');
+					else if (s->range.f.l == -HUGE_VAL)
+						fprintf(stderr, "%s %g\n", (s->range_high_eq) ? "<=" : "<", s->range.f.h);
+					else  /* s->range.f.h == HUGE_VAL */
+						fprintf(stderr, "%s %g\n", (s->range_low_eq) ? ">=" : ">", s->range.f.l);
+					return 1;
+				}
+			}
+			else {
+				if (!(((s->range_low_eq) ? *((int *) s->data) >= s->range.i.l : *((int *) s->data) > s->range.i.l)
+						&& ((s->range_high_eq) ? *((int *) s->data) <= s->range.i.h : *((int *) s->data) < s->range.i.h))) {
+					if (path) fprintf(stderr, "error: line %d in %s: %s must be ", n, path, s->name);
+					else      fprintf(stderr, "error: %s must be ", s->name);
+					if (s->range.i.l > INT_MIN && s->range.i.h < INT_MAX)
+						fprintf(stderr, "within %c%d,%d%c\n", (s->range_low_eq) ? '[' : '(', s->range.i.l, s->range.i.h, (s->range_high_eq) ? ']' : ')');
+					else if (s->range.i.l == INT_MIN)
+						fprintf(stderr, "%s %d\n", (s->range_high_eq) ? "<=" : "<", s->range.i.h);
+					else  /* s->range.i.h == INT_MAX */
+						fprintf(stderr, "%s %d\n", (s->range_low_eq) ? ">=" : ">", s->range.i.l);
+					return 1;
+				}
+			}
+			break;
+		case SETTING_TYPE_BOOL:
+			*((bool *) s->data) = (value[0] == 't' || value[0] == 'T' || value[0] == 'y' || value[0] == 'Y' || atoi(value));
+			break;
+		case SETTING_TYPE_FILL_PATTERN:
+			if (strcmp(value, "grid") == 0)
+				*((fill_pattern *) s->data) = FILL_PATTERN_GRID;
+			else if (strcmp(value, "rectilinear") == 0)
+				*((fill_pattern *) s->data) = FILL_PATTERN_RECTILINEAR;
+			else {
+				if (path) fprintf(stderr, "error: line %d in %s: illegal value for %s: %s\n", n, path, s->name, value);
+				else      fprintf(stderr, "error: illegal value for %s: %s\n", s->name, value);
+				return 1;
+			}
+			break;
+		case SETTING_TYPE_JOIN_TYPE:
+			if (strcmp(value, "miter") == 0)
+				*((ClipperLib::JoinType *) s->data) = ClipperLib::jtMiter;
+			else if (strcmp(value, "square") == 0)
+				*((ClipperLib::JoinType *) s->data) = ClipperLib::jtSquare;
+			else if (strcmp(value, "round") == 0)
+				*((ClipperLib::JoinType *) s->data) = ClipperLib::jtRound;
+			else {
+				if (path) fprintf(stderr, "error: line %d in %s: illegal value for %s: %s\n", n, path, s->name, value);
+				else      fprintf(stderr, "error: illegal value for %s: %s\n", s->name, value);
+				return 1;
+			}
+			break;
+		case SETTING_TYPE_POLY_FILL_TYPE:
+			if (strcmp(value, "even_odd") == 0)
+				*((ClipperLib::PolyFillType *) s->data) = ClipperLib::pftEvenOdd;
+			else if (strcmp(value, "non_zero") == 0)
+				*((ClipperLib::PolyFillType *) s->data) = ClipperLib::pftNonZero;
+			else if (strcmp(value, "positive") == 0)
+				*((ClipperLib::PolyFillType *) s->data) = ClipperLib::pftPositive;
+			else if (strcmp(value, "negative") == 0)
+				*((ClipperLib::PolyFillType *) s->data) = ClipperLib::pftNegative;
+			else {
+				if (path) fprintf(stderr, "error: line %d in %s: illegal value for %s: %s\n", n, path, s->name, value);
+				else      fprintf(stderr, "error: illegal value for %s: %s\n", s->name, value);
+				return 1;
+			}
+			break;
+		case SETTING_TYPE_STR:
+			free(*((char **) s->data));
+			*((char **) s->data) = strdup(value);
+			break;
+		default:
+			fprintf(stderr, "BUG: unhandled setting type for '%s'\n", s->name);
+			return 1;
+		}
 	}
 	else if (strcmp(key, "infill_feed_rate") == 0) {
-		config.solid_infill_feed_rate = atof(value);
-		config.sparse_infill_feed_rate = config.solid_infill_feed_rate;
-	}
-	else if (strcmp(key, "solid_infill_feed_rate") == 0) {
-		config.solid_infill_feed_rate = atof(value);
-	}
-	else if (strcmp(key, "sparse_infill_feed_rate") == 0) {
-		config.sparse_infill_feed_rate = atof(value);
-	}
-	else if (strcmp(key, "support_feed_rate") == 0) {
-		config.support_feed_rate = atof(value);
-	}
-	else if (strcmp(key, "travel_feed_rate") == 0) {
-		config.travel_feed_rate = atof(value);
-	}
-	else if (strcmp(key, "first_layer_mult") == 0) {
-		config.first_layer_mult = atof(value);
-		CHECK_VALUE(config.first_layer_mult > 0.0, "first layer multiplier", "> 0");
-	}
-	else if (strcmp(key, "coast_len") == 0) {
-		config.coast_len = atof(value);
-		CHECK_VALUE(config.coast_len >= 0.0, "coast length", ">= 0");
-	}
-	else if (strcmp(key, "retract_len") == 0) {
-		config.retract_len = atof(value);
-		CHECK_VALUE(config.retract_len >= 0.0, "retract length", ">= 0");
-	}
-	else if (strcmp(key, "retract_speed") == 0) {
-		config.retract_speed = atof(value);
-		CHECK_VALUE(config.retract_speed > 0.0, "retract speed", "> 0");
-	}
-	else if (strcmp(key, "moving_retract_speed") == 0) {
-		config.moving_retract_speed = atof(value);
-	}
-	else if (strcmp(key, "restart_speed") == 0) {
-		config.restart_speed = atof(value);
-	}
-	else if (strcmp(key, "retract_min_travel") == 0) {
-		config.retract_min_travel = atof(value);
-		CHECK_VALUE(config.retract_min_travel >= 0.0, "minimum travel for retraction", ">= 0");
-	}
-	else if (strcmp(key, "retract_threshold") == 0) {
-		config.retract_threshold = atof(value);
-		CHECK_VALUE(config.retract_threshold >= 0.0, "unconditional retraction threshold", ">= 0");
-	}
-	else if (strcmp(key, "retract_within_island") == 0) {
-		config.retract_within_island = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "moving_retract") == 0) {
-		config.moving_retract = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "extra_restart_len") == 0) {
-		config.extra_restart_len = atof(value);
-	}
-	else if (strcmp(key, "cool_layer") == 0) {
-		config.cool_layer = atoi(value);
-	}
-	else if (strcmp(key, "start_gcode") == 0) {
-		free(config.start_gcode);
-		config.start_gcode = strdup(value);
-	}
-	else if (strcmp(key, "end_gcode") == 0) {
-		free(config.end_gcode);
-		config.end_gcode = strdup(value);
-	}
-	else if (strcmp(key, "cool_on_gcode") == 0) {
-		free(config.cool_on_gcode);
-		config.cool_on_gcode = strdup(value);
-	}
-	else if (strcmp(key, "cool_off_gcode") == 0) {
-		free(config.cool_off_gcode);
-		config.cool_off_gcode = strdup(value);
-	}
-	else if (strcmp(key, "edge_overlap") == 0) {
-		config.edge_overlap = atof(value);
-		CHECK_VALUE(config.edge_overlap >= 0.0 && config.edge_overlap <= 1.0, "edge overlap", "within [0, 1]");
-	}
-	else if (strcmp(key, "comb") == 0) {
-		config.comb = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "strict_shell_order") == 0) {
-		config.strict_shell_order = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "align_seams") == 0) {
-		config.align_seams = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "simplify_insets") == 0) {
-		config.simplify_insets = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "fill_inset_gaps") == 0) {
-		config.fill_inset_gaps = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "no_solid") == 0) {
-		config.no_solid = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "anchor") == 0) {
-		config.anchor = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "outside_first") == 0) {
-		config.outside_first = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "connect_solid_infill") == 0) {
-		config.connect_solid_infill = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "solid_infill_first") == 0) {
-		config.solid_infill_first = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "separate_z_travel") == 0) {
-		config.separate_z_travel = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "combine_all") == 0) {
-		config.combine_all = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "generate_support") == 0) {
-		config.generate_support = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "support_everywhere") == 0) {
-		config.support_everywhere = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "solid_support_base") == 0) {
-		config.solid_support_base = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "connect_support_lines") == 0) {
-		config.connect_support_lines = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "poly_fill_type") == 0) {
-		if (strcmp(value, "even_odd") == 0)
-			config.poly_fill_type = ClipperLib::pftEvenOdd;
-		else if (strcmp(value, "non_zero") == 0)
-			config.poly_fill_type = ClipperLib::pftNonZero;
-		else if (strcmp(value, "positive") == 0)
-			config.poly_fill_type = ClipperLib::pftPositive;
-		else if (strcmp(value, "negative") == 0)
-			config.poly_fill_type = ClipperLib::pftNegative;
-		else
-			fprintf(stderr, "error: illegal value for poly_fill_type: %s\n", value);
-	}
-	else if (strcmp(key, "inset_join_type") == 0) {
-		if (parse_join_type(value, &config.inset_join_type))
-			fprintf(stderr, "error: illegal value for inset_join_type: %s\n", value);
-	}
-	else if (strcmp(key, "outset_join_type") == 0) {
-		if (parse_join_type(value, &config.outset_join_type))
-			fprintf(stderr, "error: illegal value for outset_join_type: %s\n", value);
-	}
-	else if (strcmp(key, "offset_miter_limit") == 0) {
-		config.offset_miter_limit = atof(value);
-		CHECK_VALUE(config.offset_miter_limit >= 2.0, "offset miter limit", ">= 2");
-	}
-	else if (strcmp(key, "offset_arc_tolerance") == 0) {
-		config.offset_arc_tolerance = atof(value);
-		CHECK_VALUE(config.offset_arc_tolerance >= 0.25, "offset arc tolerance", ">= 0.25");
-	}
-	else if (strcmp(key, "fill_threshold") == 0) {
-		config.fill_threshold = atof(value);
-		CHECK_VALUE(config.fill_threshold >= 0.0, "fill threshold", ">= 0");
-	}
-	else if (strcmp(key, "connected_infill_overlap") == 0) {
-		config.connected_infill_overlap = atof(value);
-		CHECK_VALUE(config.connected_infill_overlap >= 0.0 && config.connected_infill_overlap <= 0.5, "connected infill overlap", "within [0, 0.5]");
-	}
-	else if (strcmp(key, "support_angle") == 0) {
-		config.support_angle = atof(value);
-		CHECK_VALUE(config.support_angle > 0.0 && config.support_angle < 90.0, "support angle", "within (0, 90)");
-	}
-	else if (strcmp(key, "support_margin") == 0) {
-		config.support_margin = atof(value);
-		CHECK_VALUE(config.support_margin >= 0.0, "support margin", ">= 0.0");  /* FIXME: will cause problems with the combing code if set to 0 */
-	}
-	else if (strcmp(key, "support_vert_margin") == 0) {
-		config.support_vert_margin = atoi(value);
-		CHECK_VALUE(config.support_vert_margin >= 0, "support vertical margin", ">= 0");
-	}
-	else if (strcmp(key, "interface_layers") == 0) {
-		config.interface_layers = atoi(value);
-		CHECK_VALUE(config.interface_layers >= 0, "interface layers", ">= 0");
-	}
-	else if (strcmp(key, "support_xy_expansion") == 0) {
-		config.support_xy_expansion = atof(value);
-		CHECK_VALUE(config.support_xy_expansion >= 0.0, "support xy expansion", ">= 0");
-	}
-	else if (strcmp(key, "support_density") == 0) {
-		config.support_density = atof(value);
-		CHECK_VALUE(config.support_density > 0.0 && config.support_density <= 1.0, "support density", "within (0, 1]");
-	}
-	else if (strcmp(key, "support_flow_mult") == 0) {
-		config.support_flow_mult = atof(value);
-		CHECK_VALUE(config.support_flow_mult > 0.0 && config.support_flow_mult <= 1.0, "support flow multiplier", "within (0, 1]");
-	}
-	else if (strcmp(key, "min_layer_time") == 0) {
-		config.min_layer_time = atof(value);
-		CHECK_VALUE(config.min_layer_time >= 0.0, "minimum layer time", ">= 0");
-	}
-	else if (strcmp(key, "layer_time_samples") == 0) {
-		config.layer_time_samples = atoi(value);
-		CHECK_VALUE(config.layer_time_samples >= 1, "number of layer time samples", ">= 1");
-	}
-	else if (strcmp(key, "min_feed_rate") == 0) {
-		config.min_feed_rate = atof(value);
-		CHECK_VALUE(config.min_feed_rate > 0.0, "minimum feed rate", "> 0");
-	}
-	else if (strcmp(key, "brim_width") == 0) {
-		config.brim_width = atof(value);
-		CHECK_VALUE(config.brim_width >= 0.0, "brim width", ">= 0");
-	}
-	else if (strcmp(key, "brim_adhesion_factor") == 0) {
-		config.brim_adhesion_factor = atof(value);
-		CHECK_VALUE(config.brim_adhesion_factor >= 0.0 && config.brim_adhesion_factor <= 1.0, "brim adhesion factor", "within [0, 1]");
-	}
-	else if (strcmp(key, "generate_raft") == 0) {
-		config.generate_raft = PARSE_BOOL(value);
-	}
-	else if (strcmp(key, "raft_xy_expansion") == 0) {
-		config.raft_xy_expansion = atof(value);
-		CHECK_VALUE(config.raft_xy_expansion >= 0, "raft_xy_expansion", ">= 0");
-	}
-	else if (strcmp(key, "raft_base_layer_height") == 0) {
-		config.raft_base_layer_height = atof(value);
-		CHECK_VALUE(config.raft_base_layer_height > 0.0, "raft_base_layer_height", "> 0");
-	}
-	else if (strcmp(key, "raft_base_layer_width") == 0) {
-		config.raft_base_layer_width = atof(value);
-		CHECK_VALUE(config.raft_base_layer_width > 0.0, "raft_base_layer_width", "> 0");
-	}
-	else if (strcmp(key, "raft_base_layer_density") == 0) {
-		config.raft_base_layer_density = atof(value);
-		CHECK_VALUE(config.raft_base_layer_density > 0.0 && config.raft_base_layer_density <= 1.0, "raft_base_layer_density", "within (0, 1]");
-	}
-	else if (strcmp(key, "raft_vert_margin") == 0) {
-		config.raft_vert_margin = atof(value);
-		CHECK_VALUE(config.raft_vert_margin >= 0.0, "raft_vert_margin", ">= 0");
-	}
-	else if (strcmp(key, "raft_interface_flow_mult") == 0) {
-		config.raft_interface_flow_mult = atof(value);
-		CHECK_VALUE(config.raft_interface_flow_mult > 0.0, "raft_interface_flow_mult", "> 0");
-	}
-	else if (strcmp(key, "raft_interface_layers") == 0) {
-		config.raft_interface_layers = atoi(value);
-		CHECK_VALUE(config.raft_interface_layers >= 0, "raft_interface_layers", ">= 0");
-	}
-	else if (strcmp(key, "material_density") == 0) {
-		config.material_density = atof(value);
-		CHECK_VALUE(config.material_density >= 0.0, "material density", ">= 0");
-	}
-	else if (strcmp(key, "material_cost") == 0) {
-		config.material_cost = atof(value);
-		CHECK_VALUE(config.material_cost >= 0.0, "material cost", ">= 0");
-	}
-	else if (strncmp(key, "gcode_variable", 14) == 0) {
+		if (set_config_setting("solid_infill_feed_rate", value, n, path)
+				|| set_config_setting("sparse_infill_feed_rate", value, n, path))
+			return 1;
+	}
+	else if (strcmp(key, "gcode_variable") == 0) {
 		char *s = strdup(value);
 		struct user_var uv;
 		uv.value = isolate(s, '=');
 		uv.key = s;
+		if (find_config_setting(uv.key)) {
+			if (path) fprintf(stderr, "error: line %d in %s: cannot set variable %s: is a setting\n", n, path, uv.key);
+			else      fprintf(stderr, "error: cannot set variable %s: is a setting\n", uv.key);
+			free(s);
+			return 1;
+		}
 		for (auto it = config.user_vars.begin(); it != config.user_vars.end(); ++it) {
 			if (strcmp(it->key, uv.key) == 0) {
 				free(it->key);
@@ -719,15 +605,105 @@ static int set_config_option(const char *key, const char *value, int n, const ch
 		}
 		config.user_vars.push_back(uv);
 	}
-	else if (path) {
-		fprintf(stderr, "error: line %d in %s: invalid option: %s\n", n, path, key);
-		return 1;
-	}
 	else {
-		fprintf(stderr, "error: invalid option: %s\n", key);
+		if (path) fprintf(stderr, "error: line %d in %s: invalid setting: %s\n", n, path, key);
+		else      fprintf(stderr, "error: invalid setting: %s\n", key);
 		return 1;
 	}
 	return 0;
+}
+
+static void print_config_setting(FILE *f, const struct setting *s, bool convert_feed_rates)
+{
+	switch (s->type) {
+	case SETTING_TYPE_FL_T:
+		if (convert_feed_rates && s->is_feed_rate) {
+			long int feed_rate = lround((double) *((fl_t *) s->data) * 60.0);
+			fprintf(f, "%ld", (feed_rate < 1) ? 1 : feed_rate);
+		}
+		else
+			fprintf(f, "%f", (double) *((fl_t *) s->data));
+		break;
+	case SETTING_TYPE_INT:
+		fprintf(f, "%d", *((int *) s->data));
+		break;
+	case SETTING_TYPE_BOOL:
+		fprintf(f, "%s", (*((bool *) s->data)) ? "true" : "false");
+		break;
+	case SETTING_TYPE_FILL_PATTERN:
+		switch (*((fill_pattern *) s->data)) {
+		case FILL_PATTERN_GRID:        fputs("grid", f);        break;
+		case FILL_PATTERN_RECTILINEAR: fputs("rectilinear", f); break;
+		}
+		break;
+	case SETTING_TYPE_JOIN_TYPE:
+		switch (*((ClipperLib::JoinType *) s->data)) {
+		case ClipperLib::jtMiter:  fputs("miter", f);  break;
+		case ClipperLib::jtSquare: fputs("square", f); break;
+		case ClipperLib::jtRound:  fputs("round", f);  break;
+		}
+		break;
+	case SETTING_TYPE_POLY_FILL_TYPE:
+		switch (*((ClipperLib::PolyFillType *) s->data)) {
+		case ClipperLib::pftEvenOdd:  fputs("even_odd", f); break;
+		case ClipperLib::pftNonZero:  fputs("non_zero", f); break;
+		case ClipperLib::pftPositive: fputs("positive", f); break;
+		case ClipperLib::pftNegative: fputs("negative", f); break;
+		}
+		break;
+	case SETTING_TYPE_STR:
+		fputs(*((char **) s->data), f);
+		break;
+	default:
+		fprintf(stderr, "BUG: unhandled setting type for '%s'\n", s->name);
+	}
+}
+
+static void write_gcode_string(const char *s, FILE *f, bool is_user_var)
+{
+	bool line_start = true;
+	if (!s || strlen(s) == 0)
+		return;
+	while (*s) {
+		if (!is_user_var && *s == '{') {
+			const char *end_brace = strchr(s, '}');
+			if (end_brace && *(++s) != '\0') {
+				char *key = strndup(s, end_brace - s);
+				const struct setting *setting = find_config_setting(key);
+				if (setting)
+					print_config_setting(f, setting, true);
+				else {
+					for (auto it = config.user_vars.begin(); it != config.user_vars.end(); ++it) {
+						if (strcmp(key, it->key) == 0) {
+							write_gcode_string(it->value, f, true);
+							goto found_var;
+						}
+					}
+					fprintf(stderr, "warning: variable not found: %s\n", key);
+					found_var:;
+				}
+				free(key);
+				s = end_brace;
+			}
+			else {
+				fprintf(stderr, "error: syntax: expected '}'\n");
+				fputc('{', f);
+			}
+			line_start = false;
+		}
+		else if (*s == '\n') {
+			if (!line_start)
+				fputc('\n', f);
+			line_start = true;
+		}
+		else if (!line_start || (line_start && *s != '\t' && *s != ' ')) {
+			line_start = false;
+			fputc(*s, f);
+		}
+		++s;
+	}
+	if (!is_user_var)
+		fputc('\n', f);
 }
 
 static int read_config(const char *path)
@@ -746,7 +722,7 @@ static int read_config(const char *path)
 		}
 		if (*key != '\0' && *key != '#') {
 			value = isolate(key, '=');
-			if (set_config_option(key, value, i, path)) {
+			if (set_config_setting(key, value, i, path)) {
 				free(c);
 				return 2;
 			}
@@ -1033,7 +1009,7 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 	struct list iseg = NEW_LIST, oseg = NEW_LIST;
 	struct segment *s, *best, *begin, *end;
 	bool flip_points;
-	fl_t best_dist;
+	fl_t best_dist, tolerance_sq = config.tolerance * config.tolerance;
 	ClipperLib::Paths outlines;
 
 	for (i = 0; i < slice->n_seg; ++i)
@@ -1097,15 +1073,15 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 			}
 		}
 
-		/* Check whether the polygon is closed (within config.tolerance and less than best_dist) */
+		/* Check whether the polygon is closed (within tolerance_sq and less than best_dist) */
 		if (begin != end) {
 			fl_t close_dist = (begin->x[0] - end->x[1]) * (begin->x[0] - end->x[1]) + (begin->y[0] - end->y[1]) * (begin->y[0] - end->y[1]);
-			if (close_dist <= config.tolerance && close_dist < best_dist)
+			if (close_dist <= tolerance_sq && close_dist < best_dist)
 				goto add_poly;
 		}
 
-		/* Connect nearest segment (within config.tolerance) */
-		if (best && best_dist <= config.tolerance) {
+		/* Connect nearest segment (within tolerance_sq) */
+		if (best && best_dist <= tolerance_sq) {
 			s = best;
 			if (flip_points) {
 				DEBUG("flipped segment %zd at layer %zd\n", segment_count, slice_index + 1);
@@ -2648,55 +2624,6 @@ static void plan_raft(struct object *o, struct slice *slice, struct machine *m)
 	m->force_retract = true;
 }
 
-static void write_gcode_string(const char *s, FILE *f, bool is_user_var)
-{
-	bool line_start = true;
-	if (!s || strlen(s) == 0)
-		return;
-	while (*s) {
-		if (!is_user_var && *s == '{') {
-			const char *end_brace = strchr(s, '}');
-			if (end_brace && *(++s) != '\0') {
-				if (strncmp(s, "retract_len", end_brace - s) == 0)
-					fprintf(f, "%.5f", config.retract_len);
-				else if (strncmp(s, "retract_speed", end_brace - s) == 0)
-					fprintf(f, "%ld", (lround(config.retract_speed * 60.0) < 1) ? 1 : lround(config.retract_speed * 60.0));
-				else if (strncmp(s, "restart_speed", end_brace - s) == 0)
-					fprintf(f, "%ld", (lround(config.restart_speed * 60.0) < 1) ? 1 : lround(config.restart_speed * 60.0));
-				else if (strncmp(s, "travel_feed_rate", end_brace - s) == 0)
-					fprintf(f, "%ld", (lround(config.travel_feed_rate * 60.0) < 1) ? 1 : lround(config.travel_feed_rate * 60.0));
-				else {
-					for (auto it = config.user_vars.begin(); it != config.user_vars.end(); ++it) {
-						if (strncmp(s, it->key, end_brace - s) == 0) {
-							write_gcode_string(it->value, f, true);
-							goto found_var;
-						}
-					}
-					fprintf(stderr, "warning: variable not found: %.*s\n", (int) (end_brace - s), s);
-					found_var:;
-				}
-				s = end_brace;
-			}
-			else {
-				fprintf(stderr, "error: syntax: expected '}'\n");
-				fputc('{', f);
-			}
-		}
-		else if (*s == '\n') {
-			if (!line_start)
-				fputc('\n', f);
-			line_start = true;
-		}
-		else if (!line_start || (line_start && *s != '\t' && *s != ' ')) {
-			line_start = false;
-			fputc(*s, f);
-		}
-		++s;
-	}
-	if (!is_user_var)
-		fputc('\n', f);
-}
-
 static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl_t feed_rate_mult, bool force_xyz)
 {
 	fl_t feed_rate = move->feed_rate;
@@ -2709,7 +2636,7 @@ static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl
 	if (move->is_travel && move->z != m->z && config.separate_z_travel) {
 		fprintf(f, "G1 Z%.3f", CINT_TO_FL_T(move->z));
 		if (feed_rate != m->feed_rate)
-			fprintf(f, " F%ld", lround(feed_rate * 60.0));
+			fprintf(f, " F%ld", (feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
 		fputc('\n', f);
 		m->z = move->z;
 	}
@@ -2722,10 +2649,8 @@ static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl
 		fprintf(f, " Z%.3f", CINT_TO_FL_T(move->z));
 	if (move->e != 0.0)
 		fprintf(f, " E%.5f", m->e + move->e);
-	if (feed_rate != m->feed_rate) {
-		long int feed_rate_min = lround(feed_rate * 60.0);
-		fprintf(f, " F%ld", (feed_rate_min < 1) ? 1 : feed_rate_min);
-	}
+	if (feed_rate != m->feed_rate)
+		fprintf(f, " F%ld", (feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
 	fputc('\n', f);
 	m->x = move->x;
 	m->y = move->y;
@@ -2810,36 +2735,6 @@ static int write_gcode(const char *path, struct object *o)
 	return 0;
 }
 
-static const char * get_poly_fill_type_string(ClipperLib::PolyFillType pft)
-{
-	switch (pft) {
-	case ClipperLib::pftEvenOdd:  return "even_odd";
-	case ClipperLib::pftNonZero:  return "non_zero";
-	case ClipperLib::pftPositive: return "positive";
-	case ClipperLib::pftNegative: return "negative";
-	}
-	return NULL;
-}
-
-static const char * get_join_type_string(ClipperLib::JoinType jt)
-{
-	switch (jt) {
-	case ClipperLib::jtMiter:  return "miter";
-	case ClipperLib::jtSquare: return "square";
-	case ClipperLib::jtRound:  return "round";
-	}
-	return NULL;
-}
-
-static const char * get_fill_pattern_string(fill_pattern p)
-{
-	switch (p) {
-	case FILL_PATTERN_GRID:        return "grid";
-	case FILL_PATTERN_RECTILINEAR: return "rectilinear";
-	}
-	return NULL;
-}
-
 #define GET_FEED_RATE(x, m) (((x) >= 0.0) ? (x) : (m) * -(x))
 
 int main(int argc, char *argv[])
@@ -2851,7 +2746,7 @@ int main(int argc, char *argv[])
 	bool do_preview = false;
 
 	/* Parse options */
-	while ((opt = getopt(argc, argv, ":hpo:c:O:l:w:t:s:d:n:r:f:b:C:x:y:z:")) != -1) {
+	while ((opt = getopt(argc, argv, ":hpo:c:O:S:l:w:t:s:d:n:r:f:b:C:x:y:z:")) != -1) {
 		char *key, *value;
 		int ret;
 		switch (opt) {
@@ -2873,50 +2768,55 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "loaded config file: %s\n", optarg);
 			break;
 		case 'O':
+			fprintf(stderr, "warning: -O is deprecated; please use -S instead\n");
+		case 'S':
 			key = strdup(optarg);
 			value = isolate(key, '=');
-			if (set_config_option(key, value, 0, NULL))
+			if (set_config_setting(key, value, 0, NULL))
 				return 1;
 			free(key);
 			break;
 		case 'l':
-			if (set_config_option("layer_height", optarg, 0, NULL))
+			if (set_config_setting("layer_height", optarg, 0, NULL))
 				return 1;
 			break;
 		case 'w':
-			if (set_config_option("extrusion_width", optarg, 0, NULL))
+			if (set_config_setting("extrusion_width", optarg, 0, NULL))
 				return 1;
 			break;
 		case 't':
-			if (set_config_option("tolerance", optarg, 0, NULL))
+			if (set_config_setting("tolerance", optarg, 0, NULL))
 				return 1;
 			break;
 		case 's':
 			scale_factor = atof(optarg);
-			CHECK_VALUE(scale_factor != 0.0, "scale factor", "!= 0");
+			if (scale_factor == 0.0) {
+				fputs("error: scale_factor cannot be 0\n", stderr);
+				return 1;
+			}
 			break;
 		case 'd':
-			if (set_config_option("infill_density", optarg, 0, NULL))
+			if (set_config_setting("infill_density", optarg, 0, NULL))
 				return 1;
 			break;
 		case 'n':
-			if (set_config_option("shells", optarg, 0, NULL))
+			if (set_config_setting("shells", optarg, 0, NULL))
 				return 1;
 			break;
 		case 'r':
-			if (set_config_option("roof_thickness", optarg, 0, NULL))
+			if (set_config_setting("roof_thickness", optarg, 0, NULL))
 				return 1;
 			break;
 		case 'f':
-			if (set_config_option("floor_thickness", optarg, 0, NULL))
+			if (set_config_setting("floor_thickness", optarg, 0, NULL))
 				return 1;
 			break;
 		case 'b':
-			if (set_config_option("brim_width", optarg, 0, NULL))
+			if (set_config_setting("brim_width", optarg, 0, NULL))
 				return 1;
 			break;
 		case 'C':
-			if (set_config_option("coarseness", optarg, 0, NULL))
+			if (set_config_setting("coarseness", optarg, 0, NULL))
 				return 1;
 			break;
 		case 'x':
@@ -2948,8 +2848,6 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	/* config.tolerance needs to be squared */
-	config.tolerance *= config.tolerance;
 	config.roof_layers = lround(config.roof_thickness / config.layer_height);
 	config.floor_layers = lround(config.floor_thickness / config.layer_height);
 	config.extrusion_area = config.extrusion_width * config.layer_height * config.packing_density;
@@ -2986,101 +2884,14 @@ int main(int argc, char *argv[])
 		config.solid_infill_first = true;
 
 	fprintf(stderr, "configuration:\n");
-	fprintf(stderr, "  layer_height             = %f\n", config.layer_height);
-	fprintf(stderr, "  tolerance                = %f\n", sqrt(config.tolerance));
-	fprintf(stderr, "  scale_constant           = %f\n", config.scale_constant);
-	fprintf(stderr, "  coarseness               = %f\n", config.coarseness);
-	fprintf(stderr, "  extrusion_width          = %f\n", config.extrusion_width);
-	fprintf(stderr, " *edge_width               = %f\n", config.edge_width);
-	fprintf(stderr, " *extrusion_area           = %f\n", config.extrusion_area);
-	fprintf(stderr, "  scale_factor (-s)        = %f\n", scale_factor);
-	fprintf(stderr, "  xy_scale_factor          = %f\n", config.xy_scale_factor);
-	fprintf(stderr, "  z_scale_factor           = %f\n", config.z_scale_factor);
-	fprintf(stderr, "  x_center                 = %f\n", config.x_center);
-	fprintf(stderr, "  y_center                 = %f\n", config.y_center);
-	fprintf(stderr, "  packing_density          = %f\n", config.packing_density);
-	fprintf(stderr, "  edge_packing_density     = %f\n", config.edge_packing_density);
-	fprintf(stderr, "  seam_packing_density     = %f\n", config.seam_packing_density);
-	fprintf(stderr, "  extra_offset             = %f\n", config.extra_offset);
-	fprintf(stderr, " *edge_offset              = %f\n", config.edge_offset);
-	fprintf(stderr, " *shell_clip               = %f\n", config.shell_clip);
-	fprintf(stderr, "  infill_density           = %f\n", config.infill_density);
-	fprintf(stderr, "  infill_pattern           = %s\n", get_fill_pattern_string(config.infill_pattern));
-	fprintf(stderr, "  shells                   = %d\n", config.shells);
-	fprintf(stderr, "  roof_thickness           = %f\n", config.roof_thickness);
-	fprintf(stderr, " *roof_layers              = %d\n", config.roof_layers);
-	fprintf(stderr, "  floor_thickness          = %f\n", config.floor_thickness);
-	fprintf(stderr, " *floor_layers             = %d\n", config.floor_layers);
-	fprintf(stderr, "  min_shell_contact        = %f\n", config.min_shell_contact);
-	fprintf(stderr, "  material_diameter        = %f\n", config.material_diameter);
-	fprintf(stderr, " *material_area            = %f\n", config.material_area);
-	fprintf(stderr, "  flow_multiplier          = %f\n", config.flow_multiplier);
-	fprintf(stderr, "  feed_rate                = %f\n", config.feed_rate);
-	fprintf(stderr, "  perimeter_feed_rate      = %f\n", config.perimeter_feed_rate);
-	fprintf(stderr, "  loop_feed_rate           = %f\n", config.loop_feed_rate);
-	fprintf(stderr, "  solid_infill_feed_rate   = %f\n", config.solid_infill_feed_rate);
-	fprintf(stderr, "  sparse_infill_feed_rate  = %f\n", config.sparse_infill_feed_rate);
-	fprintf(stderr, "  support_feed_rate        = %f\n", config.support_feed_rate);
-	fprintf(stderr, "  travel_feed_rate         = %f\n", config.travel_feed_rate);
-	fprintf(stderr, "  first_layer_mult         = %f\n", config.first_layer_mult);
-	fprintf(stderr, "  coast_len                = %f\n", config.coast_len);
-	fprintf(stderr, "  retract_len              = %f\n", config.retract_len);
-	fprintf(stderr, "  retract_speed            = %f\n", config.retract_speed);
-	fprintf(stderr, "  moving_retract_speed     = %f\n", config.moving_retract_speed);
-	fprintf(stderr, "  restart_speed            = %f\n", config.restart_speed);
-	fprintf(stderr, "  retract_min_travel       = %f\n", config.retract_min_travel);
-	fprintf(stderr, "  retract_threshold        = %f\n", config.retract_threshold);
-	fprintf(stderr, "  retract_within_island    = %s\n", (config.retract_within_island) ? "true" : "false");
-	fprintf(stderr, "  moving_retract           = %s\n", (config.moving_retract) ? "true" : "false");
-	fprintf(stderr, "  extra_restart_len        = %f\n", config.extra_restart_len);
-	fprintf(stderr, "  cool_layer               = %d\n", config.cool_layer);
-	fprintf(stderr, "  edge_overlap             = %f\n", config.edge_overlap);
-	fprintf(stderr, "  comb                     = %s\n", (config.comb) ? "true" : "false");
-	fprintf(stderr, "  strict_shell_order       = %s\n", (config.strict_shell_order) ? "true" : "false");
-	fprintf(stderr, "  align_seams              = %s\n", (config.align_seams) ? "true" : "false");
-	fprintf(stderr, "  simplify_insets          = %s\n", (config.simplify_insets) ? "true" : "false");
-	fprintf(stderr, "  fill_inset_gaps          = %s\n", (config.fill_inset_gaps) ? "true" : "false");
-	fprintf(stderr, "  no_solid                 = %s\n", (config.no_solid) ? "true" : "false");
-	fprintf(stderr, "  anchor                   = %s\n", (config.anchor) ? "true" : "false");
-	fprintf(stderr, "  outside_first            = %s\n", (config.outside_first) ? "true" : "false");
-	fprintf(stderr, "  connect_solid_infill     = %s\n", (config.connect_solid_infill) ? "true" : "false");
-	fprintf(stderr, "  solid_infill_first       = %s\n", (config.solid_infill_first) ? "true" : "false");
-	fprintf(stderr, "  separate_z_travel        = %s\n", (config.separate_z_travel) ? "true" : "false");
-	fprintf(stderr, "  combine_all              = %s\n", (config.combine_all) ? "true" : "false");
-	fprintf(stderr, "  generate_support         = %s\n", (config.generate_support) ? "true" : "false");
-	fprintf(stderr, "  support_everywhere       = %s\n", (config.support_everywhere) ? "true" : "false");
-	fprintf(stderr, "  solid_support_base       = %s\n", (config.solid_support_base) ? "true" : "false");
-	fprintf(stderr, "  connect_support_lines    = %s\n", (config.connect_support_lines) ? "true" : "false");
-	fprintf(stderr, "  poly_fill_type           = %s\n", get_poly_fill_type_string(config.poly_fill_type));
-	fprintf(stderr, "  inset_join_type          = %s\n", get_join_type_string(config.inset_join_type));
-	fprintf(stderr, "  outset_join_type         = %s\n", get_join_type_string(config.outset_join_type));
-	fprintf(stderr, "  offset_miter_limit       = %f\n", config.offset_miter_limit);
-	fprintf(stderr, "  offset_arc_tolerance     = %f\n", config.offset_arc_tolerance);
-	fprintf(stderr, "  fill_threshold           = %f\n", config.fill_threshold);
-	fprintf(stderr, "  connected_infill_overlap = %f\n", config.connected_infill_overlap);
-	fprintf(stderr, "  support_angle            = %f\n", config.support_angle);
-	fprintf(stderr, "  support_margin           = %f\n", config.support_margin);
-	fprintf(stderr, "  support_vert_margin      = %d\n", config.support_vert_margin);
-	fprintf(stderr, "  interface_layers         = %d\n", config.interface_layers);
-	fprintf(stderr, "  support_xy_expansion     = %f\n", config.support_xy_expansion);
-	fprintf(stderr, "  support_density          = %f\n", config.support_density);
-	fprintf(stderr, "  support_flow_mult        = %f\n", config.support_flow_mult);
-	fprintf(stderr, "  min_layer_time           = %f\n", config.min_layer_time);
-	fprintf(stderr, "  layer_time_samples       = %d\n", config.layer_time_samples);
-	fprintf(stderr, "  min_feed_rate            = %f\n", config.min_feed_rate);
-	fprintf(stderr, "  brim_width               = %f\n", config.brim_width);
-	fprintf(stderr, " *brim_lines               = %d\n", config.brim_lines);
-	fprintf(stderr, "  brim_adhesion_factor     = %f\n", config.brim_adhesion_factor);
-	fprintf(stderr, "  generate_raft            = %s\n", (config.generate_raft) ? "true" : "false");
-	fprintf(stderr, "  raft_xy_expansion        = %f\n", config.raft_xy_expansion);
-	fprintf(stderr, "  raft_base_layer_height   = %f\n", config.raft_base_layer_height);
-	fprintf(stderr, "  raft_base_layer_width    = %f\n", config.raft_base_layer_width);
-	fprintf(stderr, "  raft_base_layer_density  = %f\n", config.raft_base_layer_density);
-	fprintf(stderr, "  raft_vert_margin         = %f\n", config.raft_vert_margin);
-	fprintf(stderr, "  raft_interface_flow_mult = %f\n", config.raft_interface_flow_mult);
-	fprintf(stderr, "  raft_interface_layers    = %d\n", config.raft_interface_layers);
-	fprintf(stderr, "  material_density         = %f\n", config.material_density);
-	fprintf(stderr, "  material_cost            = %f\n", config.material_cost);
+	fprintf(stderr, "  %-24s = %f\n", "scale_factor (-s)", scale_factor);
+	for (size_t i = 0; i < LENGTH(settings); ++i) {
+		if (settings[i].type != SETTING_TYPE_STR) {
+			fprintf(stderr, " %c%-24s = ", (settings[i].read_only) ? '*' : ' ', settings[i].name);
+			print_config_setting(stderr, &settings[i], false);
+			putc('\n', stderr);
+		}
+	}
 #ifdef _OPENMP
 	fprintf(stderr, "OpenMP enabled\n");
 #endif
