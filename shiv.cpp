@@ -1861,7 +1861,7 @@ static void preview_slices(struct object *o)
 /* 0 is colinear, 1 is counter-clockwise and -1 is clockwise */
 static int triplet_orientation(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, ClipperLib::IntPoint &c)
 {
-	ClipperLib::cInt v = a.X * b.Y - b.X * a.Y + b.X * c.Y - c.X * b.Y + c.X * a.Y - a.X * c.Y;  /* Calculate signed area * 2 */
+	ClipperLib::cInt v = (b.X - a.X) * (c.Y - a.Y) - (c.X - a.X) * (b.Y - a.Y);  /* Calculate signed area * 2 */
 	return (v == 0) ? 0 : (v > 0) ? 1 : -1;
 }
 
@@ -1931,6 +1931,8 @@ static bool crosses_exposed_surface(struct machine *m, struct island *island, Cl
 	return in_outer;
 }
 
+#if 0
+/* This function is currently unused */
 static size_t find_nearest_point(ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
 {
 	size_t best = 0;
@@ -1946,6 +1948,28 @@ static size_t find_nearest_point(ClipperLib::Path &p, ClipperLib::cInt x, Clippe
 	}
 	if (r_dist)
 		*r_dist = sqrt(best_dist);
+	return best;
+}
+#endif
+
+/* find_nearest_point() only looks at the points themselves, so can give undesired results when the path has long segments.
+   This function looks for the nearest line segment and then returns the nearest endpoint on that segment. */
+static size_t find_nearest_segment_endpoint_on_closed_path(ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
+{
+	size_t best = 0;
+	fl_t best_dist = HUGE_VAL;
+	ClipperLib::IntPoint p0(x, y);
+	for (size_t i = 0, i2 = 1; i < p.size(); ++i) {
+		i2 = (i2 == p.size()) ? 0 : i2;
+		fl_t dist = distance_to_line(p0, p[i], p[i2]) / config.scale_constant;
+		if (dist < best_dist) {
+			best_dist = dist;
+			best = (distance_to_point(p0, p[i]) < distance_to_point(p0, p[i2])) ? i : i2;
+		}
+		++i2;
+	}
+	if (r_dist)
+		*r_dist = distance_to_point(p0, p[best]) / config.scale_constant;
 	return best;
 }
 
@@ -2114,9 +2138,9 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 
 		ClipperLib::Path &p = b[bound_idx];
 		/* Find the boundary point closest to the start point */
-		size_t start_idx = find_nearest_point(p, p0.X, p0.Y, NULL);
+		size_t start_idx = find_nearest_segment_endpoint_on_closed_path(p, p0.X, p0.Y, NULL);
 		/* Find the boundary point closest to the end point */
-		size_t end_idx = find_nearest_point(p, x, y, NULL);
+		size_t end_idx = find_nearest_segment_endpoint_on_closed_path(p, x, y, NULL);
 		if (start_idx == end_idx) {
 			/* We can't do anything if start_idx and end_idx are equal */
 			b.erase(b.begin() + bound_idx);
