@@ -907,7 +907,7 @@ static void generate_islands(struct slice *slice, ClipperLib::PolyNode *n)
 {
 	for (ClipperLib::PolyNode *c : n->Childs) {
 		struct island island = {};
-		island.insets = (ClipperLib::Paths *) calloc((config.shells > 1) ? config.shells : 1, sizeof(ClipperLib::Paths));
+		island.insets = new ClipperLib::Paths[(config.shells > 1) ? config.shells : 1]();
 		if (!island.insets)
 			die(e_nomem, 2);
 		island.insets[0].push_back(c->Contour);
@@ -1248,7 +1248,7 @@ static void generate_insets(struct slice *slice)
 		if (config.shells > 1 && config.fill_inset_gaps) {
 			ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
 			ClipperLib::Paths hole;
-			island.inset_gaps = (ClipperLib::Paths *) calloc(config.shells - 1, sizeof(ClipperLib::Paths));
+			island.inset_gaps = new ClipperLib::Paths[config.shells - 1]();
 			if (!island.inset_gaps)
 				die(e_nomem, 2);
 			for (int i = 0; i < config.shells - 1 && island.insets[i].size() > 0; ++i) {
@@ -1655,7 +1655,7 @@ static void slice_object(struct object *o)
 	std::chrono::time_point<std::chrono::high_resolution_clock> start;
 	ssize_t i;
 	o->n_slices = (ssize_t) ceil((o->c.z + o->h / 2.0) / config.layer_height);
-	o->slices = (struct slice *) calloc(o->n_slices, sizeof(struct slice));
+	o->slices = new struct slice[o->n_slices]();
 	if (!o->slices)
 		die(e_nomem, 2);
 
@@ -2603,8 +2603,8 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		else
 			plan_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
 		plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, z);
-		free(island.insets);
-		free(island.inset_gaps);
+		delete[] island.insets;
+		delete[] island.inset_gaps;
 		if (config.comb) {
 			/* Insert and union outer boundaries for the island we just printed */
 			slice->printed_outer_boundaries.insert(slice->printed_outer_boundaries.end(), island.outer_boundaries.begin(), island.outer_boundaries.end());
