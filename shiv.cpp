@@ -82,6 +82,8 @@ static const char usage_string[] =
 
 enum fill_pattern {
 	FILL_PATTERN_GRID,
+	FILL_PATTERN_TRIANGLE,
+	FILL_PATTERN_TRIANGLE2,
 	FILL_PATTERN_RECTILINEAR,
 };
 
@@ -108,6 +110,8 @@ static struct {
 	fl_t shell_clip;                            /* Shells are clipped by this much (calculated from seam_packing_density) */
 	fl_t infill_density           = 0.2;        /* Sparse infill density */
 	fill_pattern infill_pattern   = FILL_PATTERN_RECTILINEAR;  /* Sparse infill pattern */
+	fl_t solid_infill_angle       = 45.0;       /* Solid infill angle (in degrees) */
+	fl_t sparse_infill_angle      = 45.0;       /* Solid infill angle (in degrees) */
 	int shells                    = 2;          /* Number of loops/perimeters/shells (whatever you want to call them) */
 	fl_t roof_thickness           = 0.8;        /* Solid surface thickness when looking upwards */
 	int roof_layers;                            /* Calculated from roof_thickness */
@@ -245,6 +249,8 @@ static const struct setting settings[] = {
 	SETTING(shell_clip,                SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
 	SETTING(infill_density,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
 	SETTING(infill_pattern,            SETTING_TYPE_FILL_PATTERN,   false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(solid_infill_angle,        SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(sparse_infill_angle,       SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
 	SETTING(shells,                    SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
 	SETTING(roof_thickness,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(roof_layers,               SETTING_TYPE_INT,            true,  false, { .i = { 0,         0        } }, false, false),
@@ -346,7 +352,7 @@ struct object {
 
 	ClipperLib::Paths solid_infill_patterns[2];
 	int n_sparse_infill_patterns;
-	ClipperLib::Paths sparse_infill_patterns[2];
+	ClipperLib::Paths sparse_infill_patterns[3];
 	ClipperLib::Paths brim;
 	ClipperLib::Paths raft[2];
 	ClipperLib::Paths support_pattern;
@@ -536,6 +542,10 @@ static int set_config_setting(const char *key, const char *value, int n, const c
 		case SETTING_TYPE_FILL_PATTERN:
 			if (strcmp(value, "grid") == 0)
 				*((fill_pattern *) s->data) = FILL_PATTERN_GRID;
+			else if (strcmp(value, "triangle") == 0)
+				*((fill_pattern *) s->data) = FILL_PATTERN_TRIANGLE;
+			else if (strcmp(value, "triangle2") == 0)
+				*((fill_pattern *) s->data) = FILL_PATTERN_TRIANGLE2;
 			else if (strcmp(value, "rectilinear") == 0)
 				*((fill_pattern *) s->data) = FILL_PATTERN_RECTILINEAR;
 			else {
@@ -634,6 +644,8 @@ static void print_config_setting(FILE *f, const struct setting *s, bool convert_
 	case SETTING_TYPE_FILL_PATTERN:
 		switch (*((fill_pattern *) s->data)) {
 		case FILL_PATTERN_GRID:        fputs("grid", f);        break;
+		case FILL_PATTERN_TRIANGLE:    fputs("triangle", f);    break;
+		case FILL_PATTERN_TRIANGLE2:   fputs("triangle2", f);    break;
 		case FILL_PATTERN_RECTILINEAR: fputs("rectilinear", f); break;
 		}
 		break;
@@ -1276,109 +1288,62 @@ static void generate_insets(struct slice *slice)
 	}
 }
 
-static void generate_even_line_fill(const ClipperLib::cInt min_x, const ClipperLib::cInt min_y, const ClipperLib::cInt max_x, const ClipperLib::cInt max_y, ClipperLib::Paths &p, fl_t density)
+static void generate_line_fill_at_angle(ClipperLib::Paths &p, struct vertex &center, fl_t x_len, fl_t y_len, fl_t density, fl_t angle)
 {
-	ClipperLib::Path line(2);
-	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width * 1.4142135623 / density);
-	line[0].X = min_x;
-	line[0].Y = min_y + move;
-	line[1].X = min_x + move;
-	line[1].Y = min_y;
-	while (line[0].X < max_x && line[1].Y < max_y) {
+	fl_t len_2 = MAXIMUM(x_len, y_len) / M_SQRT2;
+	fl_t move = config.extrusion_width / density;
+	ssize_t steps_2 = lround(ceil(len_2 / move));
+	for (ssize_t i = -steps_2; i <= steps_2; ++i) {
+		ClipperLib::Path line(2);
+		fl_t sin_angle = sin(angle), cos_angle = cos(angle), y = move * i;
+		line[0].X = FL_T_TO_CINT(cos_angle * -len_2 - sin_angle * y + center.x);
+		line[0].Y = FL_T_TO_CINT(sin_angle * -len_2 + cos_angle * y + center.y);
+		line[1].X = FL_T_TO_CINT(cos_angle * len_2 - sin_angle * y + center.x);
+		line[1].Y = FL_T_TO_CINT(sin_angle * len_2 + cos_angle * y + center.y);
 		p.push_back(line);
-		if (line[0].Y >= max_y)
-			line[0].X += move;
-		else
-			line[0].Y += move;
-
-		if (line[1].X >= max_x)
-			line[1].Y += move;
-		else
-			line[1].X += move;
-	}
-}
-
-static void generate_odd_line_fill(const ClipperLib::cInt min_x, const ClipperLib::cInt min_y, const ClipperLib::cInt max_x, const ClipperLib::cInt max_y, ClipperLib::Paths &p, fl_t density)
-{
-	ClipperLib::Path line(2);
-	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width * 1.4142135623 / density);
-	line[0].X = min_x;
-	line[0].Y = max_y - move;
-	line[1].X = min_x + move;
-	line[1].Y = max_y;
-	while (line[0].X < max_x && line[1].Y > min_y) {
-		p.push_back(line);
-		if (line[0].Y <= min_y)
-			line[0].X += move;
-		else
-			line[0].Y -= move;
-
-		if (line[1].X >= max_x)
-			line[1].Y -= move;
-		else
-			line[1].X += move;
-	}
-}
-
-static void generate_horizontal_line_fill(const ClipperLib::cInt min_x, const ClipperLib::cInt min_y, const ClipperLib::cInt max_x, const ClipperLib::cInt max_y, ClipperLib::Paths &p, fl_t density)
-{
-	ClipperLib::Path line(2);
-	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width / density);
-	line[0].X = min_x;
-	line[0].Y = min_y;
-	line[1].X = max_x;
-	line[1].Y = min_y;
-	while (line[0].Y < max_y) {
-		p.push_back(line);
-		line[0].Y += move;
-		line[1].Y += move;
-	}
-}
-
-static void generate_vertical_line_fill(const ClipperLib::cInt min_x, const ClipperLib::cInt min_y, const ClipperLib::cInt max_x, const ClipperLib::cInt max_y, ClipperLib::Paths &p, fl_t density)
-{
-	ClipperLib::Path line(2);
-	const ClipperLib::cInt move = FL_T_TO_CINT(config.extrusion_width / density);
-	line[0].X = min_x;
-	line[0].Y = min_y;
-	line[1].X = min_x;
-	line[1].Y = max_y;
-	while (line[0].X < max_x) {
-		p.push_back(line);
-		line[0].X += move;
-		line[1].X += move;
 	}
 }
 
 static void generate_infill_patterns(struct object *o)
 {
-	const ClipperLib::cInt min_x = FL_T_TO_CINT(o->c.x - (o->w + config.xy_extra) / 2.0);
-	const ClipperLib::cInt min_y = FL_T_TO_CINT(o->c.y - (o->d + config.xy_extra) / 2.0);
-	const ClipperLib::cInt max_x = FL_T_TO_CINT(o->c.x + (o->w + config.xy_extra) / 2.0);
-	const ClipperLib::cInt max_y = FL_T_TO_CINT(o->c.y + (o->d + config.xy_extra) / 2.0);
+	const fl_t x_len = o->w + config.xy_extra, y_len = o->d + config.xy_extra;
+	const fl_t solid_infill_angle_rad = config.solid_infill_angle / 180.0 * M_PI;
+	const fl_t sparse_infill_angle_rad = config.sparse_infill_angle / 180.0 * M_PI;
 
-	generate_even_line_fill(min_x, min_y, max_x, max_y, o->solid_infill_patterns[0], 1.0);
-	generate_odd_line_fill(min_x, min_y, max_x, max_y, o->solid_infill_patterns[1], 1.0);
+	generate_line_fill_at_angle(o->solid_infill_patterns[0], o->c, x_len, y_len, 1.0, solid_infill_angle_rad);
+	generate_line_fill_at_angle(o->solid_infill_patterns[1], o->c, x_len, y_len, 1.0, solid_infill_angle_rad + M_PI_2);
 	if (config.infill_density > 0.0) {
 		switch (config.infill_pattern) {
 		case FILL_PATTERN_GRID:
-			generate_even_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[0], config.infill_density / 2.0);
-			generate_odd_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[0], config.infill_density / 2.0);
+			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 2.0, sparse_infill_angle_rad);
+			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 2.0, sparse_infill_angle_rad + M_PI_2);
 			o->n_sparse_infill_patterns = 1;
+			break;
+		case FILL_PATTERN_TRIANGLE:
+			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 3.0, sparse_infill_angle_rad);
+			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 3.0, sparse_infill_angle_rad + M_PI / 3.0);
+			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 3.0, sparse_infill_angle_rad + 2.0 * M_PI / 3.0);
+			o->n_sparse_infill_patterns = 1;
+			break;
+		case FILL_PATTERN_TRIANGLE2:
+			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad);
+			generate_line_fill_at_angle(o->sparse_infill_patterns[1], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad + M_PI / 3.0);
+			generate_line_fill_at_angle(o->sparse_infill_patterns[2], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad + 2.0 * M_PI / 3.0);
+			o->n_sparse_infill_patterns = 3;
 			break;
 		case FILL_PATTERN_RECTILINEAR:
 		default:
-			generate_even_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[0], config.infill_density);
-			generate_odd_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[1], config.infill_density);
+			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad);
+			generate_line_fill_at_angle(o->sparse_infill_patterns[1], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad + M_PI_2);
 			o->n_sparse_infill_patterns = 2;
 		}
 	}
-	if (config.generate_support) {
-		generate_horizontal_line_fill(min_x, min_y, max_x, max_y, o->support_pattern, config.support_density);
-		generate_vertical_line_fill(min_x, min_y, max_x, max_y, o->support_interface_pattern, 1.0);
+	if (config.generate_support) {  /* +- 45deg from solid infill angle */
+		generate_line_fill_at_angle(o->support_pattern, o->c, x_len, y_len, 1.0, solid_infill_angle_rad - M_PI_4);
+		generate_line_fill_at_angle(o->support_interface_pattern, o->c, x_len, y_len, 1.0, solid_infill_angle_rad + M_PI_4);
 	}
 	if (config.generate_raft)
-		generate_even_line_fill(min_x, min_y, max_x, max_y, o->raft_base_layer_pattern, (config.extrusion_width / config.raft_base_layer_width) * config.raft_base_layer_density);
+		generate_line_fill_at_angle(o->raft_base_layer_pattern, o->c, x_len, y_len, (config.extrusion_width / config.raft_base_layer_width) * config.raft_base_layer_density, solid_infill_angle_rad);
 }
 
 #if USE_BOUNDING_BOX
@@ -2031,6 +1996,8 @@ static size_t find_nearest_segment(ClipperLib::Paths &p, ClipperLib::cInt x, Cli
 	fl_t best_dist = HUGE_VAL;
 	fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
 	for (size_t i = 0; i < p.size(); ++i) {
+		if (p[i].size() > 2)
+			fprintf(stderr, "error: bug in clipper: line segment has more than two points!\n");
 		fl_t x1_0 = CINT_TO_FL_T(p[i][0].X), y1_0 = CINT_TO_FL_T(p[i][0].Y);
 		fl_t x1_1 = CINT_TO_FL_T(p[i][1].X), y1_1 = CINT_TO_FL_T(p[i][1].Y);
 		fl_t dist0 = (x1_0 - x0) * (x1_0 - x0) + (y1_0 - y0) * (y1_0 - y0);
@@ -2543,10 +2510,10 @@ static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *
 			}
 		}
 		fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
-		bool opposite_x_dirs = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X));  /* NOTE: This needs to be changed if the infill runs vertically. */
+		bool opposite_dirs = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[0].Y));
 		fl_t shortening_dist = best_dist / p_dist * (config.extrusion_width - config.extrusion_width * config.connected_infill_overlap * 2.0) / 2.0;
 		if (!crosses_boundary
-				&& opposite_x_dirs
+				&& opposite_dirs
 				&& p_dist < config.extrusion_width + p_dist_fudge && p_dist > config.extrusion_width - p_dist_fudge
 				&& best_dist < config.extrusion_width * 2.0
 				&& distance_to_point(line0[0], line0[1]) / config.scale_constant > shortening_dist
@@ -2885,10 +2852,10 @@ int main(int argc, char *argv[])
 	config.roof_layers = lround(config.roof_thickness / config.layer_height);
 	config.floor_layers = lround(config.floor_thickness / config.layer_height);
 	config.extrusion_area = config.extrusion_width * config.layer_height * config.packing_density;
-	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI / 4.0)) / config.layer_height + config.layer_height;
+	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI_4)) / config.layer_height + config.layer_height;
 	config.edge_offset = config.edge_width / -2.0 - (config.extrusion_area * (1.0 - config.edge_packing_density)) / config.layer_height;
-	config.shell_clip = (config.extrusion_width * config.packing_density) * M_PI / 4.0 * (1.0 - config.seam_packing_density);
-	config.material_area = M_PI * config.material_diameter * config.material_diameter / 4.0;
+	config.shell_clip = (config.extrusion_width * config.packing_density) * M_PI_4 * (1.0 - config.seam_packing_density);
+	config.material_area = config.material_diameter * config.material_diameter * M_PI_4;
 	if (config.cool_on_gcode == NULL)
 		config.cool_on_gcode = strdup(DEFAULT_COOL_ON_STR);
 	if (config.cool_off_gcode == NULL)
