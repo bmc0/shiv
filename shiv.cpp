@@ -1239,7 +1239,8 @@ static void generate_insets(struct slice *slice)
 			do_offset(island.infill_insets, island.solid_infill_clip, config.solid_infill_clip_offset, 0.0);
 		else
 			island.solid_infill_clip = island.infill_insets;
-		do_offset(island.insets[0], island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
+		if (config.comb || config.generate_support)
+			do_offset(island.insets[0], island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
 		if (config.comb) {
 			island.comb_paths = island.insets[0];
 			do_offset(island.outer_boundaries, island.outer_comb_paths, config.extrusion_width / 8.0, 0.0);
@@ -2043,30 +2044,36 @@ static fl_t get_partial_path_len(ClipperLib::Path &p, size_t start, size_t end, 
 	return l;
 }
 
-static ssize_t crosses_boundary_2pt(ClipperLib::Paths &b, ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1)
+static bool crosses_boundary_2pt(ClipperLib::Path &p, ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1, fl_t *r_dist)
 {
 	fl_t start_x = CINT_TO_FL_T(p0.X), start_y = CINT_TO_FL_T(p0.Y), best_dist = HUGE_VAL;
-	ssize_t b_idx = -1;
-
-	for (size_t i = 0; i < b.size(); ++i) {
-		ClipperLib::Path &p = b[i];
-		/* Find all intersections, selecting the nearest one. Ignore if there are fewer than two intersections. */
-		fl_t tmp_best_dist = HUGE_VAL;
-		size_t intersections = 0;
-		for (size_t k = 0; k < p.size(); ++k) {
-			if (intersects(p[(k == 0) ? p.size() - 1 : k - 1], p[k], p0, p1)) {
-				fl_t x1 = CINT_TO_FL_T(p[k].X), y1 = CINT_TO_FL_T(p[k].Y);
-				fl_t dist = (x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y);
-				if (dist < tmp_best_dist)
-					tmp_best_dist = dist;
-				++intersections;
-				if (p[k] == p0 || p[k] == p1)
-					++k;  /* So the same pont isn't registered as two intersections */
-			}
+	size_t intersections = 0;
+	for (size_t k = 0; k < p.size(); ++k) {
+		if (intersects(p[(k == 0) ? p.size() - 1 : k - 1], p[k], p0, p1)) {
+			fl_t x1 = CINT_TO_FL_T(p[k].X), y1 = CINT_TO_FL_T(p[k].Y);
+			fl_t dist = (x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y);
+			if (dist < best_dist)
+				best_dist = dist;
+			++intersections;
+			if (p[k] == p0 || p[k] == p1)
+				++k;  /* So the same pont isn't registered as two intersections */
 		}
-		if (intersections > 1 && tmp_best_dist < best_dist) {
+	}
+	if (r_dist)
+		*r_dist = sqrt(best_dist);
+	return (intersections > 1);
+}
+
+static ssize_t nearest_boundary_crossing_2pt(ClipperLib::Paths &b, ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1)
+{
+	fl_t best_dist = HUGE_VAL;
+	ssize_t b_idx = -1;
+	for (size_t i = 0; i < b.size(); ++i) {
+		/* Find all intersections, selecting the nearest one. Ignore if there are fewer than two intersections. */
+		fl_t tmp_dist = HUGE_VAL;
+		if (crosses_boundary_2pt(b[i], p0, p1, &tmp_dist) && tmp_dist < best_dist) {
 			b_idx = (ssize_t) i;
-			best_dist = tmp_best_dist;
+			best_dist = tmp_dist;
 		}
 	}
 	return b_idx;
@@ -2078,7 +2085,7 @@ static size_t find_best_travel_point(ClipperLib::Paths &b, size_t b_idx, Clipper
 	size_t i = end_idx, r;
 	do {
 		r = i;
-		if (crosses_boundary_2pt(b, p0, p[i]) < 0) return i;
+		if (nearest_boundary_crossing_2pt(b, p0, p[i]) < 0) return i;
 		if (reverse) i = (i < p.size() - 1) ? i + 1 : 0;
 		else i = (i > 0) ? i - 1 : p.size() - 1;
 	} while (i != start_idx);
@@ -2106,10 +2113,11 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 	if (x == m->x || y == m->y || paths.size() == 0)
 		return;
 	ClipperLib::Paths b = bounds;
+	ssize_t last_bound_idx = -1;
 
 	while (b.size() > 0) {
 		ClipperLib::IntPoint p0(m->x, m->y), p1(x, y);
-		ssize_t bound_idx = crosses_boundary_2pt(b, p0, p1);
+		ssize_t bound_idx = nearest_boundary_crossing_2pt(b, p0, p1);
 		if (bound_idx < 0)  /* No boundary crossings, so we can move directly there */
 			return;
 
@@ -2118,9 +2126,17 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 		size_t start_idx = find_nearest_segment_endpoint_on_closed_path(p, p0.X, p0.Y, NULL);
 		/* Find the boundary point closest to the end point */
 		size_t end_idx = find_nearest_segment_endpoint_on_closed_path(p, x, y, NULL);
+		/* FIXME: These two checks should avoid hangs, but don't fix the root problem... */
 		if (start_idx == end_idx) {
-			/* We can't do anything if start_idx and end_idx are equal */
+			size_t path_pt_idx, path_idx = find_nearest_path(paths, p[end_idx].X, p[end_idx].Y, NULL, &path_pt_idx);
+			append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
 			b.erase(b.begin() + bound_idx);
+			last_bound_idx = -1;
+			continue;
+		}
+		if (bound_idx == last_bound_idx) {
+			b.erase(b.begin() + bound_idx);
+			last_bound_idx = -1;
 			continue;
 		}
 		/* Find shortest direction */
@@ -2137,18 +2153,20 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 			size_t path_pt_idx, path_idx = find_nearest_path(paths, p[i].X, p[i].Y, NULL, &path_pt_idx);
 			append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
 			p0 = paths[path_idx][path_pt_idx];
-			if (crosses_boundary_2pt(b, p0, p1) < 0)
-				return; /* No more boundary crossings */
+			if (!crosses_boundary_2pt(p, p0, p1, NULL))
+				break; /* No more boundary crossings for current boundary */
 		} while (i != end_idx);
+		last_bound_idx = bound_idx;
 	}
 }
 
 /* Move to the point nearest to the target location */
 static void move_to_island_exit(struct slice *slice, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
 {
-	size_t point_num, path_num = find_nearest_path(slice->printed_outer_comb_paths, x, y, NULL, &point_num);
-	ClipperLib::IntPoint &point = slice->printed_outer_comb_paths[path_num][point_num];
+	size_t path_pt_idx, path_idx = find_nearest_path(slice->last_comb_paths, x, y, NULL, &path_pt_idx);
+	ClipperLib::IntPoint &point = slice->last_comb_paths[path_idx][path_pt_idx];
 	combed_travel(slice, m, slice->last_boundaries, slice->last_comb_paths, point.X, point.Y, feed_rate);
+	append_linear_travel(slice, m, point.X, point.Y, m->z, feed_rate);
 }
 
 static void linear_move(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel, bool doing_infill)
@@ -2175,7 +2193,8 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 		if (z == m->z && config.comb) {
 			if (slice->last_boundaries.size() > 0) {
 				/* Inside an island and moving to a point outside of it */
-				move_to_island_exit(slice, m, x, y, feed_rate);
+				if (slice->last_comb_paths.size() > 0)
+					move_to_island_exit(slice, m, x, y, feed_rate);
 				slice->last_boundaries.clear();
 				slice->last_comb_paths.clear();
 				combed_travel(slice, m, slice->printed_outer_boundaries, slice->printed_outer_comb_paths, x, y, feed_rate);
