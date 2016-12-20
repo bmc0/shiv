@@ -345,6 +345,7 @@ struct object {
 	struct slice *slices;
 
 	ClipperLib::Paths solid_infill_patterns[2];
+	int n_sparse_infill_patterns;
 	ClipperLib::Paths sparse_infill_patterns[2];
 	ClipperLib::Paths brim;
 	ClipperLib::Paths raft[2];
@@ -1363,12 +1364,13 @@ static void generate_infill_patterns(struct object *o)
 		case FILL_PATTERN_GRID:
 			generate_even_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[0], config.infill_density / 2.0);
 			generate_odd_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[0], config.infill_density / 2.0);
-			o->sparse_infill_patterns[1] = o->sparse_infill_patterns[0];
+			o->n_sparse_infill_patterns = 1;
 			break;
 		case FILL_PATTERN_RECTILINEAR:
+		default:
 			generate_even_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[0], config.infill_density);
 			generate_odd_line_fill(min_x, min_y, max_x, max_y, o->sparse_infill_patterns[1], config.infill_density);
-			break;
+			o->n_sparse_infill_patterns = 2;
 		}
 	}
 	if (config.generate_support) {
@@ -1406,10 +1408,13 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				do_offset(island.exposed_surface, island.exposed_surface, -config.extrusion_width, 0.0);
 		}
 		if (config.infill_density == 1.0 || slice_index < config.floor_layers || slice_index + config.roof_layers >= o->n_slices) {
-			if (config.fill_threshold > 0.0)
+			if (config.fill_threshold > 0.0) {
 				remove_overlap(island.infill_insets, s_tmp, config.fill_threshold);
+				c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+			}
+			else
+				c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
 			c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
-			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			if (config.fill_inset_gaps)
 				for (int i = 0; i < config.shells - 1; ++i)
 					c.AddPaths(island.inset_gaps[i], ClipperLib::ptClip, true);
@@ -1451,22 +1456,27 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			c.Clear();
 			ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
 
-			c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
-			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
-			c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-			c.Clear();
-			if (config.fill_threshold > 0.0)
-				remove_overlap(s_tmp, s_tmp, config.fill_threshold);
-			c.AddPaths(o->sparse_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
-			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
-			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-			ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
+			if (config.infill_density > 0.0) {
+				c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
+				c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+				c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+				c.Clear();
+				if (config.fill_threshold > 0.0)
+					remove_overlap(s_tmp, s_tmp, config.fill_threshold);
+				c.AddPaths(o->sparse_infill_patterns[slice_index % o->n_sparse_infill_patterns], ClipperLib::ptSubject, false);
+				c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+				c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+				ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
+			}
 		}
 		else {
-			if (config.fill_threshold > 0.0)
+			if (config.fill_threshold > 0.0) {
 				remove_overlap(island.infill_insets, s_tmp, config.fill_threshold);
-			c.AddPaths(o->sparse_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
-			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+				c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+			}
+			else
+				c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
+			c.AddPaths(o->sparse_infill_patterns[slice_index % o->n_sparse_infill_patterns], ClipperLib::ptSubject, false);
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
 
