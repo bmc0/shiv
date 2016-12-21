@@ -1240,7 +1240,7 @@ static void generate_insets(struct slice *slice)
 		else
 			island.solid_infill_clip = island.infill_insets;
 		if (config.comb || config.generate_support)
-			do_offset(island.insets[0], island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
+			do_offset(island.boundaries, island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
 		if (config.comb) {
 			island.comb_paths = island.insets[0];
 			do_offset(island.outer_boundaries, island.outer_comb_paths, config.extrusion_width / 8.0, 0.0);
@@ -1907,29 +1907,7 @@ static bool crosses_exposed_surface(struct machine *m, struct island *island, Cl
 	return in_outer;
 }
 
-#if 0
-/* This function is currently unused */
-static size_t find_nearest_point(ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
-{
-	size_t best = 0;
-	fl_t best_dist = HUGE_VAL;
-	fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
-	for (size_t i = 0; i < p.size(); ++i) {
-		fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
-		fl_t dist = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
-		if (dist < best_dist) {
-			best_dist = dist;
-			best = i;
-		}
-	}
-	if (r_dist)
-		*r_dist = sqrt(best_dist);
-	return best;
-}
-#endif
-
-/* find_nearest_point() only looks at the points themselves, so can give undesired results when the path has long segments.
-   This function looks for the nearest line segment and then returns the nearest endpoint on that segment. */
+/* Looks for the nearest line segment and then returns the nearest endpoint on that segment. */
 static size_t find_nearest_segment_endpoint_on_closed_path(ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
 {
 	size_t best = 0;
@@ -2049,14 +2027,12 @@ static bool crosses_boundary_2pt(ClipperLib::Path &p, ClipperLib::IntPoint &p0, 
 	fl_t start_x = CINT_TO_FL_T(p0.X), start_y = CINT_TO_FL_T(p0.Y), best_dist = HUGE_VAL;
 	size_t intersections = 0;
 	for (size_t k = 0; k < p.size(); ++k) {
-		if (intersects(p[(k == 0) ? p.size() - 1 : k - 1], p[k], p0, p1)) {
+		if (p[k] != p0 && p[k] != p1 && intersects(p[(k == 0) ? p.size() - 1 : k - 1], p[k], p0, p1)) {
 			fl_t x1 = CINT_TO_FL_T(p[k].X), y1 = CINT_TO_FL_T(p[k].Y);
 			fl_t dist = (x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y);
 			if (dist < best_dist)
 				best_dist = dist;
 			++intersections;
-			if (p[k] == p0 || p[k] == p1)
-				++k;  /* So the same pont isn't registered as two intersections */
 		}
 	}
 	if (r_dist)
@@ -2107,7 +2083,7 @@ static void append_linear_travel(struct slice *slice, struct machine *m, Clipper
 }
 
 /* FIXME: This should probably obey the retract threshold */
-/* FIXME (maybe?): This can sometimes hang if 'coarseness' is obscenely high and 'simplify_insets' is true */
+/* FIXME: This function hangs in certain (rare) situations */
 static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Paths &bounds, ClipperLib::Paths &paths, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
 {
 	if (x == m->x || y == m->y || paths.size() == 0)
@@ -2120,42 +2096,42 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 		ssize_t bound_idx = nearest_boundary_crossing_2pt(b, p0, p1);
 		if (bound_idx < 0)  /* No boundary crossings, so we can move directly there */
 			return;
+		if (bound_idx == last_bound_idx) {
+			b.erase(b.begin() + bound_idx);
+			last_bound_idx = -1;
+			DEBUG("combed_travel(): warning: removed a boundary at z = %f\n", CINT_TO_FL_T(m->z));
+			continue;
+		}
 
 		ClipperLib::Path &p = b[bound_idx];
 		/* Find the boundary point closest to the start point */
 		size_t start_idx = find_nearest_segment_endpoint_on_closed_path(p, p0.X, p0.Y, NULL);
 		/* Find the boundary point closest to the end point */
 		size_t end_idx = find_nearest_segment_endpoint_on_closed_path(p, x, y, NULL);
-		/* FIXME: These two checks should avoid hangs, but don't fix the root problem... */
+		/* fprintf(stderr, "bound_idx=%zd last_bound_idx=%zd start_idx=%zd end_idx=%zd\n", bound_idx, last_bound_idx, start_idx, end_idx); */
 		if (start_idx == end_idx) {
 			size_t path_pt_idx, path_idx = find_nearest_path(paths, p[end_idx].X, p[end_idx].Y, NULL, &path_pt_idx);
 			append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
-			b.erase(b.begin() + bound_idx);
-			last_bound_idx = -1;
-			continue;
 		}
-		if (bound_idx == last_bound_idx) {
-			b.erase(b.begin() + bound_idx);
-			last_bound_idx = -1;
-			continue;
-		}
-		/* Find shortest direction */
-		fl_t f_len = get_partial_path_len(p, start_idx, end_idx, false);
-		fl_t r_len = get_partial_path_len(p, start_idx, end_idx, true);
-		bool reverse = (r_len < f_len) ? true : false;
+		else {
+			/* Find shortest direction */
+			fl_t f_len = get_partial_path_len(p, start_idx, end_idx, false);
+			fl_t r_len = get_partial_path_len(p, start_idx, end_idx, true);
+			bool reverse = (r_len < f_len) ? true : false;
 
-		size_t i;
-		/* Start one point back from start_idx so we check all relevant segments */
-		if (reverse) i = (start_idx < p.size() - 1) ? start_idx + 1 : 0;
-		else i = (start_idx > 0) ? start_idx - 1 : p.size() - 1;
-		do {
-			i = find_best_travel_point(b, bound_idx, p0, i, end_idx, reverse);
-			size_t path_pt_idx, path_idx = find_nearest_path(paths, p[i].X, p[i].Y, NULL, &path_pt_idx);
-			append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
-			p0 = paths[path_idx][path_pt_idx];
-			if (!crosses_boundary_2pt(p, p0, p1, NULL))
-				break; /* No more boundary crossings for current boundary */
-		} while (i != end_idx);
+			size_t i;
+			/* Start one point back from start_idx so we check all relevant segments */
+			if (reverse) i = (start_idx < p.size() - 1) ? start_idx + 1 : 0;
+			else i = (start_idx > 0) ? start_idx - 1 : p.size() - 1;
+			do {
+				i = find_best_travel_point(b, bound_idx, p0, i, end_idx, reverse);
+				size_t path_pt_idx, path_idx = find_nearest_path(paths, p[i].X, p[i].Y, NULL, &path_pt_idx);
+				append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
+				p0 = paths[path_idx][path_pt_idx];
+				if (!crosses_boundary_2pt(p, p0, p1, NULL))
+					break; /* No more boundary crossings for current boundary */
+			} while (i != end_idx);
+		}
 		last_bound_idx = bound_idx;
 	}
 }
@@ -2606,7 +2582,7 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		delete[] island.insets;
 		delete[] island.inset_gaps;
 		if (config.comb) {
-			/* Insert and union outer boundaries for the island we just printed */
+			/* Insert and union outer boundaries and comb paths for the island we just printed */
 			slice->printed_outer_boundaries.insert(slice->printed_outer_boundaries.end(), island.outer_boundaries.begin(), island.outer_boundaries.end());
 			ClipperLib::SimplifyPolygons(slice->printed_outer_boundaries, ClipperLib::pftNonZero);
 			slice->printed_outer_comb_paths.insert(slice->printed_outer_comb_paths.end(), island.outer_comb_paths.begin(), island.outer_comb_paths.end());
