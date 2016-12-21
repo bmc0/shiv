@@ -2083,13 +2083,13 @@ static void append_linear_travel(struct slice *slice, struct machine *m, Clipper
 }
 
 /* FIXME: This should probably obey the retract threshold */
-/* FIXME: This function hangs in certain (rare) situations */
 static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Paths &bounds, ClipperLib::Paths &paths, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
 {
 	if (x == m->x || y == m->y || paths.size() == 0)
 		return;
 	ClipperLib::Paths b = bounds;
 	ssize_t last_bound_idx = -1;
+	fl_t closest_dist = HUGE_VAL;
 
 	while (b.size() > 0) {
 		ClipperLib::IntPoint p0(m->x, m->y), p1(x, y);
@@ -2109,9 +2109,16 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 		/* Find the boundary point closest to the end point */
 		size_t end_idx = find_nearest_segment_endpoint_on_closed_path(p, x, y, NULL);
 		/* fprintf(stderr, "bound_idx=%zd last_bound_idx=%zd start_idx=%zd end_idx=%zd\n", bound_idx, last_bound_idx, start_idx, end_idx); */
+		if (distance_to_point(p[end_idx], p1) >= closest_dist) {
+			b.erase(b.begin() + bound_idx);
+			last_bound_idx = -1;
+			DEBUG("combed_travel(): warning: useless indirection at z = %f\n", CINT_TO_FL_T(m->z));
+			continue;
+		}
 		if (start_idx == end_idx) {
 			size_t path_pt_idx, path_idx = find_nearest_path(paths, p[end_idx].X, p[end_idx].Y, NULL, &path_pt_idx);
 			append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
+			p0 = paths[path_idx][path_pt_idx];
 		}
 		else {
 			/* Find shortest direction */
@@ -2128,11 +2135,20 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 				size_t path_pt_idx, path_idx = find_nearest_path(paths, p[i].X, p[i].Y, NULL, &path_pt_idx);
 				append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
 				p0 = paths[path_idx][path_pt_idx];
-				if (!crosses_boundary_2pt(p, p0, p1, NULL))
-					break; /* No more boundary crossings for current boundary */
+				if (!crosses_boundary_2pt(p, p0, p1, NULL) && distance_to_point(p0, p1) < closest_dist)
+					break;  /* Progress was made and there are no more boundary crossings for current boundary */
 			} while (i != end_idx);
 		}
-		last_bound_idx = bound_idx;
+		fl_t dist = distance_to_point(p0, p1);
+		if (dist >= closest_dist) {
+			b.erase(b.begin() + bound_idx);
+			last_bound_idx = -1;
+			DEBUG("combed_travel(): warning: ended up farther away at z = %f\n", CINT_TO_FL_T(m->z));
+		}
+		else {
+			closest_dist = dist;
+			last_bound_idx = bound_idx;
+		}
 	}
 }
 
@@ -2582,11 +2598,9 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		delete[] island.insets;
 		delete[] island.inset_gaps;
 		if (config.comb) {
-			/* Insert and union outer boundaries and comb paths for the island we just printed */
+			/* Insert outer boundaries and comb paths for the island we just printed */
 			slice->printed_outer_boundaries.insert(slice->printed_outer_boundaries.end(), island.outer_boundaries.begin(), island.outer_boundaries.end());
-			ClipperLib::SimplifyPolygons(slice->printed_outer_boundaries, ClipperLib::pftNonZero);
 			slice->printed_outer_comb_paths.insert(slice->printed_outer_comb_paths.end(), island.outer_comb_paths.begin(), island.outer_comb_paths.end());
-			ClipperLib::SimplifyPolygons(slice->printed_outer_comb_paths, ClipperLib::pftNonZero);
 			/* Set last_boundaries and last_comb_paths */
 			slice->last_boundaries = island.boundaries;
 			slice->last_comb_paths = island.comb_paths;
