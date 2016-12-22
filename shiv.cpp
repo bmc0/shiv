@@ -829,7 +829,7 @@ static void scale_object(struct object *o, fl_t x_ratio, fl_t y_ratio, fl_t z_ra
 }
 
 /* Project2D code ported from CuraEngine slicer.h (Copyright (C) 2013 David Braam) */
-static void project2d(struct segment *seg, struct vertex *v0, struct vertex *v1, struct vertex *v2, fl_t z)
+static void project2d(struct segment *seg, const struct vertex *v0, const struct vertex *v1, const struct vertex *v2, fl_t z)
 {
 	seg->x[0] = v0->x + (v1->x - v0->x) * (z - v0->z) / (v1->z - v0->z);
 	seg->y[0] = v0->y + (v1->y - v0->y) * (z - v0->z) / (v1->z - v0->z);
@@ -837,7 +837,7 @@ static void project2d(struct segment *seg, struct vertex *v0, struct vertex *v1,
 	seg->y[1] = v0->y + (v2->y - v0->y) * (z - v0->z) / (v2->z - v0->z);
 }
 
-static void find_segments(struct slice *slices, struct triangle *t)
+static void find_segments(struct slice *slices, const struct triangle *t)
 {
 	fl_t min_z, max_z, z;
 	ssize_t start, end, i;
@@ -903,15 +903,15 @@ static void find_segments(struct slice *slices, struct triangle *t)
 	}
 }
 
-static void generate_islands(struct slice *slice, ClipperLib::PolyNode *n)
+static void generate_islands(struct slice *slice, const ClipperLib::PolyNode *n)
 {
-	for (ClipperLib::PolyNode *c : n->Childs) {
+	for (const ClipperLib::PolyNode *c : n->Childs) {
 		struct island island = {};
 		island.insets = new ClipperLib::Paths[(config.shells > 1) ? config.shells : 1]();
 		if (!island.insets)
 			die(e_nomem, 2);
 		island.insets[0].push_back(c->Contour);
-		for (ClipperLib::PolyNode *cc : c->Childs) {
+		for (const ClipperLib::PolyNode *cc : c->Childs) {
 			island.insets[0].push_back(cc->Contour);
 			generate_islands(slice, cc);
 		}
@@ -923,8 +923,8 @@ static void generate_islands(struct slice *slice, ClipperLib::PolyNode *n)
 static void find_bounding_box(struct island *island)
 {
 	bool first = true;
-	for (ClipperLib::Path &path : island->insets[0]) {
-		for (ClipperLib::IntPoint &p : path) {
+	for (const ClipperLib::Path &path : island->insets[0]) {
+		for (const ClipperLib::IntPoint &p : path) {
 			if (first) {
 				island->box.x0 = p.X;
 				island->box.y0 = p.Y;
@@ -947,40 +947,40 @@ static void find_bounding_box(struct island *island)
 }
 #endif
 
-static fl_t distance_to_point(ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1)
+static fl_t distance_to_point(const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1)
 {
-	fl_t dx = p1.X - p0.X, dy = p1.Y - p0.Y;
+	const fl_t dx = p1.X - p0.X, dy = p1.Y - p0.Y;
 	return sqrt(dx * dx + dy * dy);
 }
 
-static fl_t distance_to_line(ClipperLib::IntPoint &p, ClipperLib::IntPoint &l0, ClipperLib::IntPoint &l1)
+static fl_t distance_to_line(const ClipperLib::IntPoint &p, const ClipperLib::IntPoint &l0, const ClipperLib::IntPoint &l1)
 {
-	fl_t dx = l1.X - l0.X, dy = l1.Y - l0.Y;
-	fl_t len = dx * dx + dy * dy;
+	const fl_t dx = l1.X - l0.X, dy = l1.Y - l0.Y;
+	const fl_t len = dx * dx + dy * dy;
 	if (len == 0.0)
 		return distance_to_point(p, l0);
 	/* Project p onto the line parameterized as l0 + t(l1 - l0) */
-	fl_t t = ((p.X - l0.X) * dx + (p.Y - l0.Y) * dy) / len;
+	const fl_t t = ((p.X - l0.X) * dx + (p.Y - l0.Y) * dy) / len;
 	if (t < 0.0)  /* Falls beyond the first point */
 		return distance_to_point(p, l0);
 	else if (t > 1.0) /* Falls beyond the second point */
 		return distance_to_point(p, l1);
-	ClipperLib::IntPoint proj(l0.X + t * dx, l0.Y + t * dy);
+	const ClipperLib::IntPoint proj(l0.X + t * dx, l0.Y + t * dy);
 	return distance_to_point(p, proj);
 }
 
-static fl_t perpendicular_distance_to_line(ClipperLib::IntPoint &p, ClipperLib::IntPoint &l0, ClipperLib::IntPoint &l1)
+static fl_t perpendicular_distance_to_line(const ClipperLib::IntPoint &p, const ClipperLib::IntPoint &l0, const ClipperLib::IntPoint &l1)
 {
-	fl_t dx = l1.X - l0.X, dy = l1.Y - l0.Y;
-	fl_t len = dx * dx + dy * dy;
+	const fl_t dx = l1.X - l0.X, dy = l1.Y - l0.Y;
+	const fl_t len = dx * dx + dy * dy;
 	if (len == 0.0)
 		return distance_to_point(p, l0);
-	fl_t n = dx * (fl_t) (l0.Y - p.Y) - (fl_t) (l0.X - p.X) * dy;
+	const fl_t n = dx * (fl_t) (l0.Y - p.Y) - (fl_t) (l0.X - p.X) * dy;
 	return fabs(n) / sqrt(len);
 }
 
 /* Note: epsilon is in scaled units */
-static ClipperLib::Path rdp_simplify_path(ClipperLib::Path &p, double epsilon)
+static ClipperLib::Path rdp_simplify_path(const ClipperLib::Path &p, double epsilon)
 {
 	ClipperLib::Path res;
 	fl_t max_dist = 0.0;
@@ -1291,12 +1291,13 @@ static void generate_insets(struct slice *slice)
 
 static void generate_line_fill_at_angle(ClipperLib::Paths &p, struct vertex &center, fl_t x_len, fl_t y_len, fl_t density, fl_t angle)
 {
-	fl_t len_2 = MAXIMUM(x_len, y_len) / M_SQRT2;
-	fl_t move = config.extrusion_width / density;
+	const fl_t len_2 = MAXIMUM(x_len, y_len) / M_SQRT2;
+	const fl_t move = config.extrusion_width / density;
+	const fl_t sin_angle = sin(angle), cos_angle = cos(angle);
 	ssize_t steps_2 = lround(ceil(len_2 / move));
 	for (ssize_t i = -steps_2; i <= steps_2; ++i) {
 		ClipperLib::Path line(2);
-		fl_t sin_angle = sin(angle), cos_angle = cos(angle), y = move * i;
+		const fl_t y = move * i;
 		line[0].X = FL_T_TO_CINT(cos_angle * -len_2 - sin_angle * y + center.x);
 		line[0].Y = FL_T_TO_CINT(sin_angle * -len_2 + cos_angle * y + center.y);
 		line[1].X = FL_T_TO_CINT(cos_angle * len_2 - sin_angle * y + center.x);
@@ -1364,7 +1365,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				island.exposed_surface = island.infill_insets;
 			else {
 				c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
-				for (struct island &clip_island : o->slices[slice_index + 1].islands)
+				for (const struct island &clip_island : o->slices[slice_index + 1].islands)
 					if (BOUNDING_BOX_INTERSECTS(island.box, clip_island.box))
 						c.AddPaths(clip_island.insets[0], ClipperLib::ptClip, true);
 				c.Execute(ClipperLib::ctDifference, island.exposed_surface, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
@@ -1391,7 +1392,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
 			for (int i = -config.floor_layers; i <= config.roof_layers; ++i) {
 				if (i != 0) {
-					for (struct island &clip_island : o->slices[slice_index + i].islands)
+					for (const struct island &clip_island : o->slices[slice_index + i].islands)
 						if (BOUNDING_BOX_INTERSECTS(island.box, clip_island.box))
 							c.AddPaths(clip_island.solid_infill_clip, ClipperLib::ptClip, true);
 					c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
@@ -1465,11 +1466,11 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 	ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
 	ClipperLib::Clipper c;
 	ClipperLib::Paths clip_paths;
-	for (struct island &island : o->slices[slice_index - 1].islands)
+	for (const struct island &island : o->slices[slice_index - 1].islands)
 		co.AddPaths(island.insets[0], config.outset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(clip_paths, FL_T_TO_CINT(tan(config.support_angle / 180.0 * M_PI) * config.layer_height));
 	co.Clear();
-	for (struct island &island : o->slices[slice_index].islands)
+	for (const struct island &island : o->slices[slice_index].islands)
 		c.AddPaths(island.insets[0], ClipperLib::ptSubject, true);
 	c.AddPaths(clip_paths, ClipperLib::ptClip, true);
 	c.Execute(ClipperLib::ctDifference, clip_paths, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
@@ -1481,17 +1482,17 @@ static void generate_layer_support_map(struct object *o, ssize_t slice_index)
 static void generate_support_boundaries(struct slice *slice)
 {
 	ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
-	for (struct island &island : slice->islands)
+	for (const struct island &island : slice->islands)
 		co.AddPaths(island.insets[0], config.outset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(slice->support_boundaries, FL_T_TO_CINT((0.5 + config.support_margin) * config.edge_width - config.edge_offset));
 }
 
-static void extend_support_downward(struct object *o, ClipperLib::PolyNode *n, ssize_t slice_index)
+static void extend_support_downward(struct object *o, const ClipperLib::PolyNode *n, ssize_t slice_index)
 {
 	ssize_t k;
 	ClipperLib::Paths p;
 	p.push_back(n->Contour);
-	for (ClipperLib::PolyNode *c : n->Childs)
+	for (const ClipperLib::PolyNode *c : n->Childs)
 		p.push_back(c->Contour);
 	ClipperLib::Paths *clipped_paths = new ClipperLib::Paths[slice_index + 1];
 	for (k = slice_index; k >= 0; --k) {
@@ -1517,11 +1518,11 @@ static void extend_support_downward(struct object *o, ClipperLib::PolyNode *n, s
 	delete[] clipped_paths;
 }
 
-static void generate_support_maps(struct object *o, ClipperLib::PolyNode *n, ssize_t slice_index)
+static void generate_support_maps(struct object *o, const ClipperLib::PolyNode *n, ssize_t slice_index)
 {
-	for (ClipperLib::PolyNode *c : n->Childs) {
+	for (const ClipperLib::PolyNode *c : n->Childs) {
 		extend_support_downward(o, c, slice_index);
-		for (ClipperLib::PolyNode *cc : c->Childs)
+		for (const ClipperLib::PolyNode *cc : c->Childs)
 			generate_support_maps(o, cc, slice_index);
 	}
 }
@@ -1608,7 +1609,7 @@ static void generate_brim(struct object *o)
 		return;
 	for (int i = 1; i <= config.brim_lines; ++i) {
 		ClipperLib::Paths tmp;
-		for (struct island &island : o->slices[0].islands)
+		for (const struct island &island : o->slices[0].islands)
 			tmp.insert(tmp.end(), island.insets[0].begin(), island.insets[0].end());
 		if (config.generate_support) {
 			tmp.insert(tmp.end(), o->slices[0].support_map.begin(), o->slices[0].support_map.end());
@@ -1631,7 +1632,7 @@ static void generate_raft(struct object *o)
 		ClipperLib::SimplifyPolygons(tmp, ClipperLib::pftNonZero);
 	}
 	else {
-		for (struct island &island : o->slices[0].islands)
+		for (const struct island &island : o->slices[0].islands)
 			tmp.insert(tmp.end(), island.insets[0].begin(), island.insets[0].end());
 		if (config.generate_support) {
 			tmp.insert(tmp.end(), o->slices[0].support_map.begin(), o->slices[0].support_map.end());
@@ -1740,7 +1741,7 @@ static void slice_object(struct object *o)
 		(double) std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000000.0);
 }
 
-static void preview_slices(struct object *o)
+static void preview_slices(const struct object *o)
 {
 	ssize_t i;
 	fprintf(stdout, "set size ratio -1\n");
@@ -1751,10 +1752,10 @@ static void preview_slices(struct object *o)
 		fprintf(stdout, "set title 'Layer %zd/%zd'\n", i + 1, o->n_slices);
 		/* Draw outlines */
 		fprintf(stdout, "plot \"-\" lc \"red\" dt 3 with lines title \"boundaries\", \"-\" lc \"blue\" with lines title \"insets\", \"-\" lc \"green\" with lines title \"infill\"\n");
-		for (struct island &island : o->slices[i].islands) {
-			for (ClipperLib::Path &path : island.boundaries) {
+		for (const struct island &island : o->slices[i].islands) {
+			for (const ClipperLib::Path &path : island.boundaries) {
 				if (path.size() >= 3) {
-					for (ClipperLib::IntPoint &p : path)
+					for (const ClipperLib::IntPoint &p : path)
 						fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
 					fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
 					putc('\n', stdout);
@@ -1769,9 +1770,9 @@ static void preview_slices(struct object *o)
 		#endif
 		}
 		/* Draw support map */
-		for (ClipperLib::Path &path : o->slices[i].support_map) {
+		for (const ClipperLib::Path &path : o->slices[i].support_map) {
 			if (path.size() >= 3) {
-				for (ClipperLib::IntPoint &p : path)
+				for (const ClipperLib::IntPoint &p : path)
 					fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
 				fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
 				putc('\n', stdout);
@@ -1779,11 +1780,11 @@ static void preview_slices(struct object *o)
 		}
 		fprintf(stdout, "e\n");
 		/* Draw insets */
-		for (struct island &island : o->slices[i].islands) {
+		for (const struct island &island : o->slices[i].islands) {
 			for (int k = 0; k < config.shells; ++k) {
-				for (ClipperLib::Path &path : island.insets[k]) {
+				for (const ClipperLib::Path &path : island.insets[k]) {
 					if (path.size() >= 3) {
-						for (ClipperLib::IntPoint &p : path)
+						for (const ClipperLib::IntPoint &p : path)
 							fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
 						fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
 						putc('\n', stdout);
@@ -1793,9 +1794,9 @@ static void preview_slices(struct object *o)
 		}
 		/* Draw brim */
 		if (i == 0) {
-			for (ClipperLib::Path &path : o->brim) {
+			for (const ClipperLib::Path &path : o->brim) {
 				if (path.size() >= 3) {
-					for (ClipperLib::IntPoint &p : path)
+					for (const ClipperLib::IntPoint &p : path)
 						fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
 					fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
 					putc('\n', stdout);
@@ -1804,26 +1805,26 @@ static void preview_slices(struct object *o)
 		}
 		fprintf(stdout, "e\n");
 		/* Draw infill */
-		for (struct island &island : o->slices[i].islands) {
-			for (ClipperLib::Path &path : island.solid_infill) {
-				for (ClipperLib::IntPoint &p : path)
+		for (const struct island &island : o->slices[i].islands) {
+			for (const ClipperLib::Path &path : island.solid_infill) {
+				for (const ClipperLib::IntPoint &p : path)
 					fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
 				putc('\n', stdout);
 			}
-			for (ClipperLib::Path &path : island.sparse_infill) {
-				for (ClipperLib::IntPoint &p : path)
+			for (const ClipperLib::Path &path : island.sparse_infill) {
+				for (const ClipperLib::IntPoint &p : path)
 					fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
 				putc('\n', stdout);
 			}
 		}
 		/* Draw support lines */
-		for (ClipperLib::Path &path : o->slices[i].support_lines) {
-			for (ClipperLib::IntPoint &p : path)
+		for (const ClipperLib::Path &path : o->slices[i].support_lines) {
+			for (const ClipperLib::IntPoint &p : path)
 				fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
 			putc('\n', stdout);
 		}
-		for (ClipperLib::Path &path : o->slices[i].support_interface_lines) {
-			for (ClipperLib::IntPoint &p : path)
+		for (const ClipperLib::Path &path : o->slices[i].support_interface_lines) {
+			for (const ClipperLib::IntPoint &p : path)
 				fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
 			putc('\n', stdout);
 		}
@@ -1835,25 +1836,25 @@ static void preview_slices(struct object *o)
 }
 
 /* 0 is colinear, 1 is counter-clockwise and -1 is clockwise */
-static int triplet_orientation(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, ClipperLib::IntPoint &c)
+static int triplet_orientation(const ClipperLib::IntPoint &a, const ClipperLib::IntPoint &b, const ClipperLib::IntPoint &c)
 {
-	ClipperLib::cInt v = (b.X - a.X) * (c.Y - a.Y) - (c.X - a.X) * (b.Y - a.Y);  /* Calculate signed area * 2 */
+	const ClipperLib::cInt v = (b.X - a.X) * (c.Y - a.Y) - (c.X - a.X) * (b.Y - a.Y);  /* Calculate signed area * 2 */
 	return (v == 0) ? 0 : (v > 0) ? 1 : -1;
 }
 
-static int is_on_segment(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, ClipperLib::IntPoint &c)
+static int is_on_segment(const ClipperLib::IntPoint &a, const ClipperLib::IntPoint &b, const ClipperLib::IntPoint &c)
 {
 	if (b.X <= MAXIMUM(a.X, c.X) && b.X >= MINIMUM(a.X, c.X) && b.Y <= MAXIMUM(a.Y, c.Y) && b.Y >= MINIMUM(a.Y, c.Y))
 		return true;
 	return false;
 }
 
-static bool intersects(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, ClipperLib::IntPoint &c, ClipperLib::IntPoint &d)
+static bool intersects(const ClipperLib::IntPoint &a, const ClipperLib::IntPoint &b, const ClipperLib::IntPoint &c, const ClipperLib::IntPoint &d)
 {
-	int o1 = triplet_orientation(a, b, c);
-	int o2 = triplet_orientation(a, b, d);
-	int o3 = triplet_orientation(c, d, a);
-	int o4 = triplet_orientation(c, d, b);
+	const int o1 = triplet_orientation(a, b, c);
+	const int o2 = triplet_orientation(a, b, d);
+	const int o3 = triplet_orientation(c, d, a);
+	const int o4 = triplet_orientation(c, d, b);
 	if (o1 != o2 && o3 != o4)
 		return true;
 	if (o1 == 0 && is_on_segment(a, c, b))
@@ -1867,7 +1868,7 @@ static bool intersects(ClipperLib::IntPoint &a, ClipperLib::IntPoint &b, Clipper
 	return false;
 }
 
-static ssize_t get_boundary_crossing(ClipperLib::Path &p, ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1)
+static ssize_t get_boundary_crossing(const ClipperLib::Path &p, const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1)
 {
 	for (size_t i = 1; i < p.size(); ++i) {
 		if (intersects(p[i - 1], p[i], p0, p1))
@@ -1878,10 +1879,10 @@ static ssize_t get_boundary_crossing(ClipperLib::Path &p, ClipperLib::IntPoint &
 	return -1;
 }
 
-static ssize_t crosses_boundary(struct machine *m, ClipperLib::Paths &bounds, ClipperLib::cInt x, ClipperLib::cInt y)
+static ssize_t crosses_boundary(const struct machine *m, const ClipperLib::Paths &bounds, ClipperLib::cInt x, ClipperLib::cInt y)
 {
-	ClipperLib::IntPoint p0(m->x, m->y);
-	ClipperLib::IntPoint p1(x, y);
+	const ClipperLib::IntPoint p0(m->x, m->y);
+	const ClipperLib::IntPoint p1(x, y);
 	for (size_t i = 0; i < bounds.size(); ++i) {
 		if (get_boundary_crossing(bounds[i], p0, p1) >= 0)
 			return (ssize_t) i;
@@ -1889,12 +1890,12 @@ static ssize_t crosses_boundary(struct machine *m, ClipperLib::Paths &bounds, Cl
 	return -1;
 }
 
-static bool crosses_exposed_surface(struct machine *m, struct island *island, ClipperLib::cInt x, ClipperLib::cInt y)
+static bool crosses_exposed_surface(const struct machine *m, const struct island *island, ClipperLib::cInt x, ClipperLib::cInt y)
 {
-	ClipperLib::IntPoint p0(m->x, m->y);
-	ClipperLib::IntPoint p1(x, y);
+	const ClipperLib::IntPoint p0(m->x, m->y);
+	const ClipperLib::IntPoint p1(x, y);
 	bool in_outer = false;
-	for (ClipperLib::Path &p : island->exposed_surface) {
+	for (const ClipperLib::Path &p : island->exposed_surface) {
 		if (get_boundary_crossing(p, p0, p1) >= 0)
 			return true;
 		else if (ClipperLib::PointInPolygon(p0, p) || ClipperLib::PointInPolygon(p1, p)) {
@@ -1908,11 +1909,11 @@ static bool crosses_exposed_surface(struct machine *m, struct island *island, Cl
 }
 
 /* Looks for the nearest line segment and then returns the nearest endpoint on that segment. */
-static size_t find_nearest_segment_endpoint_on_closed_path(ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
+static size_t find_nearest_segment_endpoint_on_closed_path(const ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
 {
 	size_t best = 0;
 	fl_t best_dist = HUGE_VAL;
-	ClipperLib::IntPoint p0(x, y);
+	const ClipperLib::IntPoint p0(x, y);
 	for (size_t i = 0, i2 = 1; i < p.size(); ++i) {
 		i2 = (i2 == p.size()) ? 0 : i2;
 		fl_t dist = distance_to_line(p0, p[i], p[i2]) / config.scale_constant;
@@ -1927,11 +1928,11 @@ static size_t find_nearest_segment_endpoint_on_closed_path(ClipperLib::Path &p, 
 	return best;
 }
 
-static size_t find_nearest_path(ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, size_t *r_start)
+static size_t find_nearest_path(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, size_t *r_start)
 {
 	size_t best = 0, start = 0;
 	fl_t best_dist = HUGE_VAL;
-	fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
 	for (size_t i = 0; i < p.size(); ++i) {
 		for (size_t k = 0; k < p[i].size(); ++k) {
 			fl_t x1 = CINT_TO_FL_T(p[i][k].X), y1 = CINT_TO_FL_T(p[i][k].Y);
@@ -1950,11 +1951,11 @@ static size_t find_nearest_path(ClipperLib::Paths &p, ClipperLib::cInt x, Clippe
 	return best;
 }
 
-static size_t find_nearest_aligned_path(ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
+static size_t find_nearest_aligned_path(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
 {
 	size_t best = 0;
 	fl_t best_dist = HUGE_VAL;
-	fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
 	for (size_t i = 0; i < p.size(); ++i) {
 		fl_t x1 = CINT_TO_FL_T(p[i][0].X), y1 = CINT_TO_FL_T(p[i][0].Y);
 		fl_t dist = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
@@ -1968,12 +1969,12 @@ static size_t find_nearest_aligned_path(ClipperLib::Paths &p, ClipperLib::cInt x
 	return best;
 }
 
-static size_t find_nearest_segment(ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, bool *r_flip)
+static size_t find_nearest_segment(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, bool *r_flip)
 {
 	bool flip = false;
 	size_t best = 0;
 	fl_t best_dist = HUGE_VAL;
-	fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
 	for (size_t i = 0; i < p.size(); ++i) {
 		if (p[i].size() > 2)
 			fprintf(stderr, "error: bug in clipper: line segment has more than two points!\n");
@@ -1999,14 +2000,14 @@ static size_t find_nearest_segment(ClipperLib::Paths &p, ClipperLib::cInt x, Cli
 	return best;
 }
 
-static void append_g_move(struct slice *slice, struct g_move &move, fl_t len)
+static void append_g_move(struct slice *slice, const struct g_move &move, fl_t len)
 {
 	/* FIXME: should probably take acceleration into account... */
 	slice->layer_time += len / move.feed_rate;
 	slice->moves.push_back(move);
 }
 
-static fl_t get_partial_path_len(ClipperLib::Path &p, size_t start, size_t end, bool reverse)
+static fl_t get_partial_path_len(const ClipperLib::Path &p, size_t start, size_t end, bool reverse)
 {
 	fl_t l = 0.0;
 	fl_t x0 = CINT_TO_FL_T(p[start].X), y0 = CINT_TO_FL_T(p[start].Y);
@@ -2022,14 +2023,15 @@ static fl_t get_partial_path_len(ClipperLib::Path &p, size_t start, size_t end, 
 	return l;
 }
 
-static bool crosses_boundary_2pt(ClipperLib::Path &p, ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1, fl_t *r_dist)
+static bool crosses_boundary_2pt(const ClipperLib::Path &p, const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1, fl_t *r_dist)
 {
-	fl_t start_x = CINT_TO_FL_T(p0.X), start_y = CINT_TO_FL_T(p0.Y), best_dist = HUGE_VAL;
+	const fl_t start_x = CINT_TO_FL_T(p0.X), start_y = CINT_TO_FL_T(p0.Y);
+	fl_t best_dist = HUGE_VAL;
 	size_t intersections = 0;
 	for (size_t k = 0; k < p.size(); ++k) {
 		if (p[k] != p0 && p[k] != p1 && intersects(p[(k == 0) ? p.size() - 1 : k - 1], p[k], p0, p1)) {
-			fl_t x1 = CINT_TO_FL_T(p[k].X), y1 = CINT_TO_FL_T(p[k].Y);
-			fl_t dist = (x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y);
+			const fl_t x1 = CINT_TO_FL_T(p[k].X), y1 = CINT_TO_FL_T(p[k].Y);
+			const fl_t dist = (x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y);
 			if (dist < best_dist)
 				best_dist = dist;
 			++intersections;
@@ -2040,7 +2042,7 @@ static bool crosses_boundary_2pt(ClipperLib::Path &p, ClipperLib::IntPoint &p0, 
 	return (intersections > 1);
 }
 
-static ssize_t nearest_boundary_crossing_2pt(ClipperLib::Paths &b, ClipperLib::IntPoint &p0, ClipperLib::IntPoint &p1)
+static ssize_t nearest_boundary_crossing_2pt(const ClipperLib::Paths &b, const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1)
 {
 	fl_t best_dist = HUGE_VAL;
 	ssize_t b_idx = -1;
@@ -2055,9 +2057,9 @@ static ssize_t nearest_boundary_crossing_2pt(ClipperLib::Paths &b, ClipperLib::I
 	return b_idx;
 }
 
-static size_t find_best_travel_point(ClipperLib::Paths &b, size_t b_idx, ClipperLib::IntPoint &p0, size_t start_idx, size_t end_idx, bool reverse)
+static size_t find_best_travel_point(const ClipperLib::Paths &b, size_t b_idx, const ClipperLib::IntPoint &p0, size_t start_idx, size_t end_idx, bool reverse)
 {
-	ClipperLib::Path &p = b[b_idx];
+	const ClipperLib::Path &p = b[b_idx];
 	size_t i = end_idx, r;
 	do {
 		r = i;
@@ -2071,10 +2073,10 @@ static size_t find_best_travel_point(ClipperLib::Paths &b, size_t b_idx, Clipper
 static void append_linear_travel(struct slice *slice, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t feed_rate)
 {
 	if (x != m->x || y != m->y || z != m->z) {
-		fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
-		fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
-		fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
-		struct g_move move = { x, y, z, 0.0, feed_rate, false, true, false };
+		const fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
+		const fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
+		const fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
+		const struct g_move move = { x, y, z, 0.0, feed_rate, false, true, false };
 		append_g_move(slice, move, len);
 		m->x = x;
 		m->y = y;
@@ -2083,7 +2085,7 @@ static void append_linear_travel(struct slice *slice, struct machine *m, Clipper
 }
 
 /* FIXME: This should probably obey the retract threshold */
-static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Paths &bounds, ClipperLib::Paths &paths, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
+static void combed_travel(struct slice *slice, struct machine *m, const ClipperLib::Paths &bounds, const ClipperLib::Paths &paths, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
 {
 	if (x == m->x || y == m->y || paths.size() == 0)
 		return;
@@ -2122,8 +2124,8 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 		}
 		else {
 			/* Find shortest direction */
-			fl_t f_len = get_partial_path_len(p, start_idx, end_idx, false);
-			fl_t r_len = get_partial_path_len(p, start_idx, end_idx, true);
+			const fl_t f_len = get_partial_path_len(p, start_idx, end_idx, false);
+			const fl_t r_len = get_partial_path_len(p, start_idx, end_idx, true);
 			bool reverse = (r_len < f_len) ? true : false;
 
 			size_t i;
@@ -2139,7 +2141,7 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 					break;  /* Progress was made and there are no more boundary crossings for current boundary */
 			} while (i != end_idx);
 		}
-		fl_t dist = distance_to_point(p0, p1);
+		const fl_t dist = distance_to_point(p0, p1);
 		if (dist >= closest_dist) {
 			b.erase(b.begin() + bound_idx);
 			last_bound_idx = -1;
@@ -2156,17 +2158,17 @@ static void combed_travel(struct slice *slice, struct machine *m, ClipperLib::Pa
 static void move_to_island_exit(struct slice *slice, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
 {
 	size_t path_pt_idx, path_idx = find_nearest_path(slice->last_comb_paths, x, y, NULL, &path_pt_idx);
-	ClipperLib::IntPoint &point = slice->last_comb_paths[path_idx][path_pt_idx];
+	const ClipperLib::IntPoint &point = slice->last_comb_paths[path_idx][path_pt_idx];
 	combed_travel(slice, m, slice->last_boundaries, slice->last_comb_paths, point.X, point.Y, feed_rate);
 	append_linear_travel(slice, m, point.X, point.Y, m->z, feed_rate);
 }
 
-static void linear_move(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel, bool doing_infill)
+static void linear_move(struct slice *slice, const struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel, bool doing_infill)
 {
-	fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
-	fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
+	const fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
+	const fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
 	struct g_move move = { x, y, z, 0.0, feed_rate, scalable, is_travel, false };
-	fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
+	const fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 	if (is_travel) {
 		if (!m->is_retracted && config.retract_len > 0.0
 			&& (m->force_retract
@@ -2226,19 +2228,19 @@ static void linear_move(struct slice *slice, struct island *island, struct machi
 	m->force_retract = false;
 }
 
-static bool path_len_is_greater_than(ClipperLib::Path &p, fl_t len)
+static bool path_len_is_greater_than(const ClipperLib::Path &p, fl_t len)
 {
 	fl_t l = 0.0;
 	fl_t x0 = CINT_TO_FL_T(p[0].X), y0 = CINT_TO_FL_T(p[0].Y);
 	for (size_t i = 1; i < p.size(); ++i) {
-		fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
+		const fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
 		l += sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
 		if (l > len)
 			return true;
 		x0 = x1;
 		y0 = y1;
 	}
-	fl_t x1 = CINT_TO_FL_T(p[0].X), y1 = CINT_TO_FL_T(p[0].Y);
+	const fl_t x1 = CINT_TO_FL_T(p[0].X), y1 = CINT_TO_FL_T(p[0].Y);
 	l += sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
 	if (l > len)
 		return true;
@@ -2254,14 +2256,14 @@ static void clip_path_from_end(ClipperLib::Path &p, ClipperLib::Path *clipped_po
 		if (clipped_points)
 			clipped_points->push_back(*(p.end() - 1));
 		p.erase(p.end() - 1);
-		fl_t x1 = CINT_TO_FL_T((p.end() - 1)->X), y1 = CINT_TO_FL_T((p.end() - 1)->Y);
-		fl_t xv = x1 - x0, yv = y1 - y0;
-		fl_t norm = sqrt(xv * xv + yv * yv);
+		const fl_t x1 = CINT_TO_FL_T((p.end() - 1)->X), y1 = CINT_TO_FL_T((p.end() - 1)->Y);
+		const fl_t xv = x1 - x0, yv = y1 - y0;
+		const fl_t norm = sqrt(xv * xv + yv * yv);
 		l += norm;
 		if (l == clip)
 			break;
 		else if (l > clip) {
-			fl_t new_x = x1 - (l - clip) * (xv / norm), new_y = y1 - (l - clip) * (yv / norm);
+			const fl_t new_x = x1 - (l - clip) * (xv / norm), new_y = y1 - (l - clip) * (yv / norm);
 			p.push_back(FL_T_TO_INTPOINT(new_x, new_y));
 			break;
 		}
@@ -2273,21 +2275,21 @@ static void clip_path_from_end(ClipperLib::Path &p, ClipperLib::Path *clipped_po
 }
 
 /* Do a non-stationary retract at the end of a shell. Expects a standard closed path where the first point is also the end point (in other words, no repeated points). */
-static void moving_retract(ClipperLib::Path &p, struct slice *slice, struct machine *m, ClipperLib::cInt z, size_t start_idx, fl_t feed_rate)
+static void moving_retract(const ClipperLib::Path &p, struct slice *slice, struct machine *m, ClipperLib::cInt z, size_t start_idx, fl_t feed_rate)
 {
-	fl_t len_ratio = config.moving_retract_speed / feed_rate;
-	fl_t move_len = config.retract_len / len_ratio;
+	const fl_t len_ratio = config.moving_retract_speed / feed_rate;
+	const fl_t move_len = config.retract_len / len_ratio;
 	fl_t x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y), l = 0.0, rl = 0.0;
 	for (size_t i = start_idx;; ++i) {
 		if (i >= p.size())
 			i = 0;
-		fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
-		fl_t xv = x1 - x0, yv = y1 - y0;
-		fl_t norm = sqrt(xv * xv + yv * yv);
+		const fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
+		const fl_t xv = x1 - x0, yv = y1 - y0;
+		const fl_t norm = sqrt(xv * xv + yv * yv);
 		l += norm;
 		if (rl + norm * len_ratio >= config.retract_len) {
-			fl_t new_x = x1 - (l - move_len) * (xv / norm), new_y = y1 - (l - move_len) * (yv / norm);
-			struct g_move move = { FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y), z, -(config.retract_len - rl), feed_rate, false, false, false };
+			const fl_t new_x = x1 - (l - move_len) * (xv / norm), new_y = y1 - (l - move_len) * (yv / norm);
+			const struct g_move move = { FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y), z, -(config.retract_len - rl), feed_rate, false, false, false };
 			append_g_move(slice, move, move_len - (l - norm));
 			m->x = move.x;
 			m->y = move.y;
@@ -2295,7 +2297,7 @@ static void moving_retract(ClipperLib::Path &p, struct slice *slice, struct mach
 			break;
 		}
 		else if (norm > 0.0) {
-			struct g_move move = { p[i].X, p[i].Y, z, -norm * len_ratio, feed_rate, false, false, false };
+			const struct g_move move = { p[i].X, p[i].Y, z, -norm * len_ratio, feed_rate, false, false, false };
 			append_g_move(slice, move, norm);
 			/* No need to update m->{x,y,z} */
 		}
@@ -2304,7 +2306,7 @@ static void moving_retract(ClipperLib::Path &p, struct slice *slice, struct mach
 	m->is_retracted = true;
 }
 
-static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
+static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
 {
 	if (p.size() < 3)
 		return;
@@ -2316,7 +2318,6 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 		do_anchor = true;
 		total_clip += config.extrusion_width / 2.0;
 	}
-	bool do_coast = (config.coast_len > 0.0 && path_len_is_greater_than(p, total_clip + config.coast_len * 2.0));
 	ClipperLib::Path lp = p;
 	if (start_idx != 0)
 		std::rotate(lp.begin(), lp.begin() + start_idx, lp.end());
@@ -2324,9 +2325,9 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 	if (total_clip > 0.0)
 		clip_path_from_end(lp, NULL, total_clip);
 	ClipperLib::Path coast_path;
-	if (do_coast)
+	if (config.coast_len > 0.0 && path_len_is_greater_than(p, total_clip + config.coast_len * 2.0))
 		clip_path_from_end(lp, &coast_path, config.coast_len);
-	for (ClipperLib::IntPoint &point : lp) {
+	for (const ClipperLib::IntPoint &point : lp) {
 		if (first_point) {
 			linear_move(slice, island, m, point.X, point.Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false);
 			first_point = false;
@@ -2341,7 +2342,7 @@ static void generate_closed_path_moves(ClipperLib::Path &p, size_t start_idx, st
 		}
 	}
 	m->is_retracted = true;  /* Make sure we don't retract */
-	for (ClipperLib::IntPoint &point : coast_path)
+	for (const ClipperLib::IntPoint &point : coast_path)
 		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true, false);
 	m->is_retracted = false;
 	if (config.moving_retract)
@@ -2368,15 +2369,15 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 		fl_t best_dist;
 		size_t best = find_nearest_segment(lines, m->x, m->y, &best_dist, &flip_points);
 		ClipperLib::Path &p = lines[best];
-		fl_t x0 = CINT_TO_FL_T(p[0].X), y0 = CINT_TO_FL_T(p[0].Y);
-		fl_t x1 = CINT_TO_FL_T(p[1].X), y1 = CINT_TO_FL_T(p[1].Y);
-		fl_t len = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+		const fl_t x0 = CINT_TO_FL_T(p[0].X), y0 = CINT_TO_FL_T(p[0].Y);
+		const fl_t x1 = CINT_TO_FL_T(p[1].X), y1 = CINT_TO_FL_T(p[1].Y);
+		const fl_t len = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
 		if (len > min_len) {
 			bool crosses_boundary = false;
 			if (!first) {
-				ClipperLib::IntPoint p0(m->x, m->y);
-				for (struct island &island : slice->islands) {
-					for (ClipperLib::Path &bound : island.outer_boundaries) {
+				const ClipperLib::IntPoint p0(m->x, m->y);
+				for (const struct island &island : slice->islands) {
+					for (const ClipperLib::Path &bound : island.outer_boundaries) {
 						if (get_boundary_crossing(bound, last_line[0], last_line[1]) >= 0 || get_boundary_crossing(bound, p0, (flip_points) ? p[1] : p[0]) >= 0) {
 							crosses_boundary = true;
 							m->force_retract = true;
@@ -2477,8 +2478,8 @@ static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct is
 {
 	while (!lines.empty()) {
 		bool flip_points;
-		size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
-		ClipperLib::Path &p = lines[best];
+		const size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
+		const ClipperLib::Path &p = lines[best];
 		if (flip_points) {
 			linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
 			linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, feed_rate, 1.0, true, false, true);
@@ -2511,7 +2512,7 @@ static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *
 		if (flip_points)
 			std::swap(line1[0], line1[1]);
 		bool crosses_boundary = false;
-		for (ClipperLib::Path &bound : island->boundaries) {
+		for (const ClipperLib::Path &bound : island->boundaries) {
 			if (get_boundary_crossing(bound, line0[0], line0[1]) >= 0
 					|| get_boundary_crossing(bound, line0[1], line1[0]) >= 0
 					/* || crosses_exposed_surface(m, island, line1[0].X, line1[0].Y) */) {
@@ -2520,9 +2521,9 @@ static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *
 				break;
 			}
 		}
-		fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
-		bool opposite_dirs = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[0].Y));
-		fl_t shortening_dist = best_dist / p_dist * (config.extrusion_width - config.extrusion_width * config.connected_infill_overlap * 2.0) / 2.0;
+		const fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
+		const bool opposite_dirs = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[0].Y));
+		const fl_t shortening_dist = best_dist / p_dist * (config.extrusion_width - config.extrusion_width * config.connected_infill_overlap * 2.0) / 2.0;
 		if (!crosses_boundary
 				&& opposite_dirs
 				&& p_dist < config.extrusion_width + p_dist_fudge && p_dist > config.extrusion_width - p_dist_fudge
@@ -2560,12 +2561,12 @@ static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *
 
 static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num, struct machine *m)
 {
-	ClipperLib::cInt z = FL_T_TO_CINT(((fl_t) layer_num) * config.layer_height + config.layer_height + config.object_z_extra);
+	const ClipperLib::cInt z = FL_T_TO_CINT(((fl_t) layer_num) * config.layer_height + config.layer_height + config.object_z_extra);
 	if (layer_num == 0 && config.brim_lines > 0)
 		plan_brim(o, m, z);
 	if (config.generate_support) {
-		fl_t support_flow_adjust = (layer_num > 0) ? config.support_flow_mult : 1.0;
-		fl_t support_feed_rate = (layer_num > 0) ? config.support_feed_rate : config.perimeter_feed_rate;
+		const fl_t support_flow_adjust = (layer_num > 0) ? config.support_flow_mult : 1.0;
+		const fl_t support_feed_rate = (layer_num > 0) ? config.support_feed_rate : config.perimeter_feed_rate;
 		plan_support(slice, slice->support_interface_lines, m, z, config.extrusion_width, (layer_num == 0 || config.connect_support_lines) ? config.extrusion_width * 1.9 : 0.0, support_flow_adjust, support_feed_rate);
 		plan_support(slice, slice->support_lines, m, z, config.extrusion_width * 2.0, (layer_num == 0 || config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0 : 0.0, support_flow_adjust, support_feed_rate);
 	}
@@ -2634,12 +2635,12 @@ static void plan_raft(struct object *o, struct slice *slice, struct machine *m)
 	m->force_retract = true;
 }
 
-static void write_gcode_move(FILE *f, struct g_move *move, struct machine *m, fl_t feed_rate_mult, bool force_xyz)
+static void write_gcode_move(FILE *f, const struct g_move *move, struct machine *m, fl_t feed_rate_mult, bool force_xyz)
 {
 	fl_t feed_rate = move->feed_rate;
 	if (move->scalable) {
 		feed_rate *= feed_rate_mult;
-		fl_t min_feed_rate = (move->is_restart) ? config.min_feed_rate * config.extrusion_area / config.material_area : config.min_feed_rate;
+		const fl_t min_feed_rate = (move->is_restart) ? config.min_feed_rate * config.extrusion_area / config.material_area : config.min_feed_rate;
 		if (feed_rate < min_feed_rate)
 			feed_rate = min_feed_rate;
 	}
@@ -2692,7 +2693,7 @@ static int write_gcode(const char *path, struct object *o)
 		struct slice raft_dummy_slice;
 		plan_raft(o, &raft_dummy_slice, &plan_m);
 		fputs("; raft\n", f);
-		for (struct g_move &move : raft_dummy_slice.moves) {
+		for (const struct g_move &move : raft_dummy_slice.moves) {
 			write_gcode_move(f, &move, &export_m, 1.0, is_first_move);
 			is_first_move = false;
 		}
@@ -2709,7 +2710,7 @@ static int write_gcode(const char *path, struct object *o)
 		average_layer_time /= config.layer_time_samples;
 		if (average_layer_time < config.min_layer_time)
 			feed_rate_mult *= average_layer_time / config.min_layer_time;
-		for (struct g_move &move : slice->moves) {
+		for (const struct g_move &move : slice->moves) {
 			write_gcode_move(f, &move, &export_m, feed_rate_mult, is_first_move);
 			is_first_move = false;
 		}
@@ -2727,14 +2728,14 @@ static int write_gcode(const char *path, struct object *o)
 	write_gcode_string(config.cool_off_gcode, f, false);
 	write_gcode_string(config.end_gcode, f, false);
 	fputs(" done\n", stderr);
-	fl_t mass = config.material_area * total_e * config.material_density / config.flow_multiplier;
+	const fl_t mass = config.material_area * total_e * config.material_density / config.flow_multiplier;
 	fprintf(f, "; material length = %.4f\n", total_e / config.flow_multiplier);
 	fprintf(f, "; material mass   = %.4f\n", mass);
 	fprintf(f, "; material cost   = %.4f\n", mass * config.material_cost);
 	fprintf(stderr, "material length = %.4f\n", total_e / config.flow_multiplier);
 	fprintf(stderr, "material mass   = %.4f\n", mass);
 	fprintf(stderr, "material cost   = %.4f\n", mass * config.material_cost);
-	long int bytes = ftell(f);
+	const long int bytes = ftell(f);
 	if (bytes >= 2048 * 1024)
 		fprintf(stderr, "wrote %.2fMiB\n", bytes / 1024.0 / 1024.0);
 	else if (bytes >= 2048)
