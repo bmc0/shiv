@@ -2302,6 +2302,8 @@ static void moving_retract(const ClipperLib::Path &p, struct slice *slice, struc
 			/* No need to update m->{x,y,z} */
 		}
 		rl += norm * len_ratio;
+		x0 = x1;
+		y0 = y1;
 	}
 	m->is_retracted = true;
 }
