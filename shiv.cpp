@@ -2029,12 +2029,14 @@ static bool crosses_boundary_2pt(const ClipperLib::Path &p, const ClipperLib::In
 	fl_t best_dist = HUGE_VAL;
 	size_t intersections = 0;
 	for (size_t k = 0; k < p.size(); ++k) {
-		if (p[k] != p0 && p[k] != p1 && intersects(p[(k == 0) ? p.size() - 1 : k - 1], p[k], p0, p1)) {
+		if (intersects(p[(k == 0) ? p.size() - 1 : k - 1], p[k], p0, p1)) {
 			const fl_t x1 = CINT_TO_FL_T(p[k].X), y1 = CINT_TO_FL_T(p[k].Y);
 			const fl_t dist = (x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y);
 			if (dist < best_dist)
 				best_dist = dist;
 			++intersections;
+			if (p[k] == p0 || p[k] == p1)
+				++k;  /* So the same point isn't registered as two intersections */
 		}
 	}
 	if (r_dist)
