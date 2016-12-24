@@ -1437,16 +1437,17 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			}
 		}
 		else {
-			if (config.fill_threshold > 0.0) {
-				remove_overlap(island.infill_insets, s_tmp, config.fill_threshold);
-				c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+			if (config.infill_density > 0.0) {
+				if (config.fill_threshold > 0.0) {
+					remove_overlap(island.infill_insets, s_tmp, config.fill_threshold);
+					c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+				}
+				else
+					c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
+				c.AddPaths(o->sparse_infill_patterns[slice_index % o->n_sparse_infill_patterns], ClipperLib::ptSubject, false);
+				c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+				ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
 			}
-			else
-				c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
-			c.AddPaths(o->sparse_infill_patterns[slice_index % o->n_sparse_infill_patterns], ClipperLib::ptSubject, false);
-			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-			ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
-
 			if (config.fill_inset_gaps) {
 				c.Clear();
 				c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
