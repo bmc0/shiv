@@ -87,6 +87,15 @@ enum fill_pattern {
 	FILL_PATTERN_RECTILINEAR,
 };
 
+struct user_var {
+	char *key, *value;
+};
+
+struct at_layer_gcode {
+	int layer;
+	char *value;
+};
+
 /* default config */
 #define DEFAULT_COOL_ON_STR  "M106 S255"
 #define DEFAULT_COOL_OFF_STR "M107"
@@ -197,6 +206,7 @@ static struct {
 	fl_t material_cost            = 0.01499;    /* Material cost in <arbitrary currency> / <arbitrary mass unit>. The arbitrary mass unit must be the same as used in material_density */
 
 	std::vector<struct user_var> user_vars;     /* User-set variables */
+	std::vector<struct at_layer_gcode> at_layer;
 
 	/* internal stuff */
 	fl_t xy_extra                 = 0.0;        /* Extra xy size (brim, raft, extra_offset, support_xy_expansion, etc...). */
@@ -416,10 +426,6 @@ struct machine {
 	bool is_retracted, force_retract;
 };
 
-struct user_var {
-	char *key, *value;
-};
-
 static void die(const char *s, int r)
 {
 	fputs(s, stderr);
@@ -615,6 +621,13 @@ static int set_config_setting(const char *key, const char *value, int n, const c
 			}
 		}
 		config.user_vars.push_back(uv);
+	}
+	else if (strcmp(key, "at_layer") == 0) {
+		char *s = strdup(value);
+		struct at_layer_gcode g;
+		g.value = isolate(s, '=');
+		g.layer = atoi(s);
+		config.at_layer.push_back(g);
 	}
 	else {
 		if (path) fprintf(stderr, "error: line %d in %s: invalid setting: %s\n", n, path, key);
@@ -2707,6 +2720,9 @@ static int write_gcode(const char *path, struct object *o)
 		struct slice *slice = &o->slices[i];
 		plan_moves(o, slice, i, &plan_m);
 		fprintf(f, "; layer %zd (z = %f)\n", i, ((fl_t) i) * config.layer_height + config.layer_height + config.object_z_extra);
+		for (struct at_layer_gcode &g : config.at_layer)
+			if (g.layer == i)
+				write_gcode_string(g.value, f, false);
 		if (i == config.cool_layer)
 			write_gcode_string(config.cool_on_gcode, f, false);
 		fl_t average_layer_time = slice->layer_time / feed_rate_mult;

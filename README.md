@@ -156,12 +156,14 @@ Setting                    | Default value | Description
 `material_density`         |     `0.00125` | Material density in `arbitrary_mass_unit / input_output_unit^3`. The default is approximately correct for PLA and millimeter input/output units.
 `material_cost`            |     `0.01499` | Material cost in `arbitrary_currency / arbitrary_mass_unit`. The arbitrary mass unit must be the same as used in `material_density`.
 `gcode_variable`           |        `None` | Set a variable that can be expanded within a G-code string option (see "G-code variables" below).
+`at_layer`                 |        `None` | Print a string to the output file at the beginning of a given layer (numbered from zero).
 
 #### G-code variables:
 
-Variables and settings can be expanded by enclosing the variable/setting name
-in curly braces: `{name}`. If the variable/setting does not exist, it will
-expand to an empty string.
+Variables and settings can be expanded within the `start_gcode`, `end_gcode`,
+`cool_on_gcode`, `cool_off_gcode`, and `at_layer` settings by enclosing the
+variable/setting name in curly braces: `{name}`. If the variable/setting does
+not exist, it will expand to an empty string.
 
 #### Configuration files:
 
@@ -178,7 +180,7 @@ Example:
 	feed_rate=60
 	travel_feed_rate=120
 	first_layer_mult=0.5
-	cool_on_gcode=M106 S255
+	cool_on_gcode=M106 S{fan_speed}
 	cool_off_gcode=M106 S0
 	start_gcode=
 		G21              ; Metric
@@ -187,8 +189,8 @@ Example:
 		G28 X0 Y0        ; Home X and Y
 		G28 Z0           ; Home Z
 		G1 Z20.0 F3300
-		M190 S{bed_temp} ; Wait for bed to reach temp
-		M109 S{temp}     ; Wait for hotend to reach temp
+		M190 S{first_layer_bed_temp} ; Wait for bed to reach temp
+		M109 S{first_layer_temp}     ; Wait for hotend to reach temp
 		G92 E0
 		G1 E20.0 F100    ; Prime extruder
 		G92 E0
@@ -199,6 +201,9 @@ Example:
 		M140 S0
 		G28 X0 Y0
 		M84              ; Disable steppers
+	at_layer=1=
+		M104 S{temp}     ; Set second layer temp
+		M140 S{bed_temp} ; Set second layer bed temp
 	xy_scale_factor=1.003
 	z_scale_factor=1.0
 	packing_density=0.98
@@ -207,8 +212,11 @@ Example:
 	material_diameter=1.735
 	retract_len=0.5
 	retract_speed=20
-	gcode_variable=temp=220
-	gcode_variable=bed_temp=65
+	gcode_variable=first_layer_temp=220
+	gcode_variable=first_layer_bed_temp=65
+	gcode_variable=temp=210
+	gcode_variable=bed_temp=60
+	gcode_variable=fan_speed=255
 	cool_layer=2
 	min_layer_time=10
 	min_feed_rate=5
