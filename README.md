@@ -162,8 +162,11 @@ Setting                    | Default value | Description
 
 Variables and settings can be expanded within the `start_gcode`, `end_gcode`,
 `cool_on_gcode`, `cool_off_gcode`, and `at_layer` settings by enclosing the
-variable/setting name in curly braces: `{name}`. If the variable/setting does
-not exist, it will expand to an empty string.
+variable/setting name in curly braces: `{name}`. Alternates can be specified by
+separating multiple names with colons: `{var1:var2:var3}`. If a
+variable/setting does not exist, the next alternate will be tried. If none of
+the alternates exist, it will expand to an empty string and warning will be
+printed.
 
 #### Configuration files:
 
@@ -189,8 +192,8 @@ Example:
 		G28 X0 Y0        ; Home X and Y
 		G28 Z0           ; Home Z
 		G1 Z20.0 F3300
-		M190 S{first_layer_bed_temp} ; Wait for bed to reach temp
-		M109 S{first_layer_temp}     ; Wait for hotend to reach temp
+		M190 S{first_layer_bed_temp:bed_temp} ; Wait for bed to reach temp
+		M109 S{first_layer_temp:temp}         ; Wait for hotend to reach temp
 		G92 E0
 		G1 E20.0 F100    ; Prime extruder
 		G92 E0

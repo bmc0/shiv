@@ -694,21 +694,28 @@ static void write_gcode_string(const char *s, FILE *f, bool is_user_var)
 		if (!is_user_var && *s == '{') {
 			const char *end_brace = strchr(s, '}');
 			if (end_brace && *(++s) != '\0') {
-				char *key = strndup(s, end_brace - s);
-				const struct setting *setting = find_config_setting(key);
-				if (setting)
-					print_config_setting(f, setting, true);
-				else {
-					for (auto it = config.user_vars.begin(); it != config.user_vars.end(); ++it) {
-						if (strcmp(key, it->key) == 0) {
-							write_gcode_string(it->value, f, true);
-							goto found_var;
-						}
+				char *key_str = strndup(s, end_brace - s), *key = key_str;
+				while (*key != '\0') {
+					char *next_key = isolate(key, ':');
+					const struct setting *setting = find_config_setting(key);
+					if (setting) {
+						print_config_setting(f, setting, true);
+						goto found_var;
 					}
-					fprintf(stderr, "warning: variable not found: %s\n", key);
-					found_var:;
+					else {
+						for (auto it = config.user_vars.begin(); it != config.user_vars.end(); ++it) {
+							if (strcmp(key, it->key) == 0) {
+								write_gcode_string(it->value, f, true);
+								goto found_var;
+							}
+						}
+						if (*next_key == '\0')
+							fprintf(stderr, "warning: variable not found: %s\n", key);
+					}
+					key = next_key;
 				}
-				free(key);
+				found_var:
+				free(key_str);
 				s = end_brace;
 			}
 			else {
