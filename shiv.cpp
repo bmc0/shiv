@@ -1361,7 +1361,7 @@ static void generate_infill_patterns(struct object *o)
 		}
 	}
 	if (config.generate_support) {  /* +- 45deg from solid infill angle */
-		generate_line_fill_at_angle(o->support_pattern, o->c, x_len, y_len, 1.0, solid_infill_angle_rad - M_PI_4);
+		generate_line_fill_at_angle(o->support_pattern, o->c, x_len, y_len, config.support_density, solid_infill_angle_rad - M_PI_4);
 		generate_line_fill_at_angle(o->support_interface_pattern, o->c, x_len, y_len, 1.0, solid_infill_angle_rad + M_PI_4);
 	}
 	if (config.generate_raft)
