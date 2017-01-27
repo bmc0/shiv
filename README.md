@@ -72,8 +72,8 @@ Setting                    | Default value | Description
 `x_center`                 |         `0.0` | X coordinate to center the object on.
 `y_center`                 |         `0.0` | Y coordinate to center the object on.
 `packing_density`          |        `0.98` | Solid packing density. Should be slightly less than 1. 0.98 seems to work for PLA.
-`edge_packing_density`     |        `0.95` | Packing density of the constrained half of the outer perimeter.
-`seam_packing_density`     |        `0.89` | Packing density of the ends of each shell (the seam).
+`edge_packing_density`     |        `0.95` | Packing density of the constrained half of the outer perimeter (relative to `packing_density`).
+`shell_clip`               |        `0.15` | Length to clip off the ends of shells in units of `extrusion_width`.
 `extra_offset`             |         `0.0` | Offset the object by this distance in the xy plane.
 `infill_density`           |         `0.2` | Sparse infill density.
 `infill_pattern`           | `rectilinear` | Sparse infill pattern. Legal values are `grid`, `triangle`, `triangle2`, and `rectilinear`.
@@ -150,7 +150,7 @@ Setting                    | Default value | Description
 `raft_base_layer_height`   |         `0.3` | Layer height for the first layer of the raft.
 `raft_base_layer_width`    |         `0.6` | Extrusion width for the first layer of the raft.
 `raft_base_layer_density`  |         `0.5` | Fill density for the first layer of the raft.
-`raft_vert_margin`         |         `1.0` | Vertical gap between the model and raft, in units of layer_height.
+`raft_vert_margin`         |         `1.0` | Vertical gap between the model and raft, in units of `layer_height`.
 `raft_interface_flow_mult` |        `0.75` | Flow rate is multiplied by this value for the raft interface layers.
 `raft_interface_layers`    |           `1` | Number of solid interface layers.
 `material_density`         |     `0.00125` | Material density in `arbitrary_mass_unit / input_output_unit^3`. The default is approximately correct for PLA and millimeter input/output units.
@@ -211,7 +211,6 @@ Example:
 	z_scale_factor=1.0
 	packing_density=0.98
 	edge_packing_density=0.94
-	seam_packing_density=0.8
 	material_diameter=1.735
 	retract_len=0.5
 	retract_speed=20

@@ -111,12 +111,11 @@ static struct {
 	fl_t z_scale_factor           = 1.0;        /* Scale object in z axis by this ratio to compensate for shrinkage */
 	fl_t x_center                 = 0.0;
 	fl_t y_center                 = 0.0;
-	fl_t packing_density          = 0.98;       /* Solid packing density (should be slightly less than 1; 0.98 seems to work well for PLA) */
-	fl_t edge_packing_density     = 0.95;       /* Packing density of the contranied half of the outer perimeter */
-	fl_t seam_packing_density     = 0.89;       /* Packing density of the ends of each shell (the seam) */
+	fl_t packing_density          = 0.98;       /* Solid packing density. Should be slightly less than 1. 0.98 seems to work well for PLA) */
+	fl_t edge_packing_density     = 0.95;       /* Packing density of the contranied half of the outer perimeter (relative to packing_density) */
+	fl_t shell_clip               = 0.15;       /* Length to clip off the ends of shells in units of extrusion_width */
 	fl_t extra_offset             = 0.0;        /* Offset the object by this distance in the xy plane */
 	fl_t edge_offset;                           /* Offset of the outer perimeter (calculated) */
-	fl_t shell_clip;                            /* Shells are clipped by this much (calculated from seam_packing_density) */
 	fl_t infill_density           = 0.2;        /* Sparse infill density */
 	fill_pattern infill_pattern   = FILL_PATTERN_RECTILINEAR;  /* Sparse infill pattern */
 	fl_t solid_infill_angle       = 45.0;       /* Solid infill angle (in degrees) */
@@ -253,10 +252,9 @@ static const struct setting settings[] = {
 	SETTING(y_center,                  SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
 	SETTING(packing_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(edge_packing_density,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
-	SETTING(seam_packing_density,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(shell_clip,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(extra_offset,              SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
 	SETTING(edge_offset,               SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
-	SETTING(shell_clip,                SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
 	SETTING(infill_density,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
 	SETTING(infill_pattern,            SETTING_TYPE_FILL_PATTERN,   false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(solid_infill_angle,        SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
@@ -2337,8 +2335,8 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 		return;
 	fl_t total_clip = 0.0;
 	bool first_point = true, do_anchor = false;
-	if (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * 2.0))
-		total_clip += config.shell_clip;
+	if (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * config.extrusion_width * 2.0))
+		total_clip += config.shell_clip * config.extrusion_width;
 	if (config.anchor && path_len_is_greater_than(p, total_clip + config.extrusion_width * 2.0)) {
 		do_anchor = true;
 		total_clip += config.extrusion_width / 2.0;
@@ -2892,7 +2890,6 @@ int main(int argc, char *argv[])
 	config.extrusion_area = config.extrusion_width * config.layer_height * config.packing_density;
 	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI_4)) / config.layer_height + config.layer_height;
 	config.edge_offset = config.edge_width / -2.0 - (config.extrusion_area * (1.0 - config.edge_packing_density)) / config.layer_height;
-	config.shell_clip = (config.extrusion_width * config.packing_density) * M_PI_4 * (1.0 - config.seam_packing_density);
 	config.material_area = config.material_diameter * config.material_diameter * M_PI_4;
 	if (config.cool_on_gcode == NULL)
 		config.cool_on_gcode = strdup(DEFAULT_COOL_ON_STR);
