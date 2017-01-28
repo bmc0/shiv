@@ -137,9 +137,10 @@ Setting                    | Default value | Description
 `support_angle`            |        `70.0` | Angle threshold for support.
 `support_margin`           |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
 `support_vert_margin`      |           `1` | Vertical spacing between support and model, in layers.
-`interface_layers`         |           `0` | Number of solid support interface layers.
+`interface_layers`         |           `0` | Number of support interface layers.
 `support_xy_expansion`     |         `2.0` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
 `support_density`          |         `0.3` | Support structure density.
+`interface_density`        |         `0.7` | Support interface density.
 `support_flow_mult`        |        `0.75` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove.
 `min_layer_time`           |         `8.0` | Minimum layer time.
 `layer_time_samples`       |           `5` | Number of samples in the layer time moving average.

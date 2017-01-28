@@ -183,9 +183,10 @@ static struct {
 	fl_t support_angle            = 70.0;       /* Angle threshold for support */
 	fl_t support_margin           = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin       = 1;          /* Vertical spacing between support and model, in layers */
-	int interface_layers          = 0;          /* Number of solid support interface layers */
+	int interface_layers          = 0;          /* Number of support interface layers */
 	fl_t support_xy_expansion     = 2.0;        /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
 	fl_t support_density          = 0.3;        /* Support structure density */
+	fl_t interface_density        = 0.7;        /* Support interface density */
 	fl_t support_flow_mult        = 0.75;       /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. */
 	fl_t min_layer_time           = 8.0;        /* Slow down if the estimated layer time is less than this value */
 	int layer_time_samples        = 5;          /* Number of samples in the layer time moving average */
@@ -324,6 +325,7 @@ static const struct setting settings[] = {
 	SETTING(interface_layers,          SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
 	SETTING(support_xy_expansion,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(support_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(interface_density,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(support_flow_mult,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(min_layer_time,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(layer_time_samples,        SETTING_TYPE_INT,            false, false, { .i = { 1,         INT_MAX  } }, true,  true),
@@ -1360,7 +1362,7 @@ static void generate_infill_patterns(struct object *o)
 	}
 	if (config.generate_support) {  /* +- 45deg from solid infill angle */
 		generate_line_fill_at_angle(o->support_pattern, o->c, x_len, y_len, config.support_density, solid_infill_angle_rad - M_PI_4);
-		generate_line_fill_at_angle(o->support_interface_pattern, o->c, x_len, y_len, 1.0, solid_infill_angle_rad + M_PI_4);
+		generate_line_fill_at_angle(o->support_interface_pattern, o->c, x_len, y_len, config.interface_density, solid_infill_angle_rad + M_PI_4);
 	}
 	if (config.generate_raft)
 		generate_line_fill_at_angle(o->raft_base_layer_pattern, o->c, x_len, y_len, (config.extrusion_width / config.raft_base_layer_width) * config.raft_base_layer_density, solid_infill_angle_rad);
@@ -2590,8 +2592,8 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 	if (config.generate_support) {
 		const fl_t support_flow_adjust = (layer_num > 0) ? config.support_flow_mult : 1.0;
 		const fl_t support_feed_rate = (layer_num > 0) ? config.support_feed_rate : config.perimeter_feed_rate;
-		plan_support(slice, slice->support_interface_lines, m, z, config.extrusion_width, (layer_num == 0 || config.connect_support_lines) ? config.extrusion_width * 1.9 : 0.0, support_flow_adjust, support_feed_rate);
-		plan_support(slice, slice->support_lines, m, z, config.extrusion_width * 2.0, (layer_num == 0 || config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.support_density * 10.0 : 0.0, support_flow_adjust, support_feed_rate);
+		plan_support(slice, slice->support_interface_lines, m, z, config.extrusion_width, (layer_num == 0 || config.connect_support_lines) ? (layer_num == 0 && config.solid_support_base) ? config.extrusion_width * 1.9 : config.extrusion_width / config.interface_density * 1.9 : 0.0, support_flow_adjust, support_feed_rate);
+		plan_support(slice, slice->support_lines, m, z, config.extrusion_width * 2.0, (layer_num == 0 || config.connect_support_lines) ? config.extrusion_width / config.support_density * 10.0 : 0.0, support_flow_adjust, support_feed_rate);
 	}
 	while (slice->islands.size() > 0) {
 		size_t best = 0;
