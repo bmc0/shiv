@@ -1570,6 +1570,11 @@ static void remove_supports_not_touching_build_plate(struct object *o)
 	}
 }
 
+static void remove_small_support_regions(struct slice *slice)
+{
+	remove_overlap(slice->support_map, slice->support_map, 0.5);
+}
+
 static void generate_support_lines(struct object *o, struct slice *slice, ssize_t slice_index)
 {
 	ClipperLib::Clipper c;
@@ -1596,7 +1601,7 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		c.Clear();
-		do_offset_square(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0);
+		/* do_offset_square(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0); */  /* doesn't seem to work as well as I had hoped... */
 		c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
 		c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
@@ -1736,6 +1741,11 @@ static void slice_object(struct object *o)
 			union_support_maps(&o->slices[i]);
 		if (!config.support_everywhere)
 			remove_supports_not_touching_build_plate(o);
+	#ifdef _OPENMP
+		#pragma omp parallel for schedule(dynamic)
+	#endif
+		for (i = 0; i < o->n_slices; ++i)
+			remove_small_support_regions(&o->slices[i]);
 	#ifdef _OPENMP
 		#pragma omp parallel for schedule(dynamic)
 	#endif
