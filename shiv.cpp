@@ -1947,7 +1947,7 @@ static size_t find_nearest_segment_endpoint_on_closed_path(const ClipperLib::Pat
 	const ClipperLib::IntPoint p0(x, y);
 	for (size_t i = 0, i2 = 1; i < p.size(); ++i) {
 		i2 = (i2 == p.size()) ? 0 : i2;
-		fl_t dist = distance_to_line(p0, p[i], p[i2]) / config.scale_constant;
+		const fl_t dist = distance_to_line(p0, p[i], p[i2]);
 		if (dist < best_dist) {
 			best_dist = dist;
 			best = (distance_to_point(p0, p[i]) < distance_to_point(p0, p[i2])) ? i : i2;
@@ -2056,13 +2056,12 @@ static fl_t get_partial_path_len(const ClipperLib::Path &p, size_t start, size_t
 
 static bool crosses_boundary_2pt(const ClipperLib::Path &p, const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1, fl_t *r_dist)
 {
-	const fl_t start_x = CINT_TO_FL_T(p0.X), start_y = CINT_TO_FL_T(p0.Y);
 	fl_t best_dist = HUGE_VAL;
 	size_t intersections = 0;
 	for (size_t k = 0; k < p.size(); ++k) {
-		if (intersects(p[(k == 0) ? p.size() - 1 : k - 1], p[k], p0, p1)) {
-			const fl_t x1 = CINT_TO_FL_T(p[k].X), y1 = CINT_TO_FL_T(p[k].Y);
-			const fl_t dist = (x1 - start_x) * (x1 - start_x) + (y1 - start_y) * (y1 - start_y);
+		const size_t k2 = (k == 0) ? p.size() - 1 : k - 1;
+		if (intersects(p[k2], p[k], p0, p1)) {
+			const fl_t dist = distance_to_line(p0, p[k2], p[k]);
 			if (dist < best_dist)
 				best_dist = dist;
 			++intersections;
@@ -2071,7 +2070,7 @@ static bool crosses_boundary_2pt(const ClipperLib::Path &p, const ClipperLib::In
 		}
 	}
 	if (r_dist)
-		*r_dist = sqrt(best_dist);
+		*r_dist = best_dist / config.scale_constant;
 	return (intersections > 1);
 }
 
