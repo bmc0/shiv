@@ -188,6 +188,7 @@ static struct {
 	fl_t support_density          = 0.3;        /* Support structure density */
 	fl_t interface_density        = 0.7;        /* Support interface density */
 	fl_t support_flow_mult        = 0.75;       /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. */
+	fl_t support_wipe_len         = 0.0;        /* Wipe the nozzle over the previously printed line if a boundary will be crossed */
 	fl_t min_layer_time           = 8.0;        /* Slow down if the estimated layer time is less than this value */
 	int layer_time_samples        = 5;          /* Number of samples in the layer time moving average */
 	fl_t min_feed_rate            = 10.0;
@@ -327,6 +328,7 @@ static const struct setting settings[] = {
 	SETTING(support_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(interface_density,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(support_flow_mult,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(support_wipe_len,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(min_layer_time,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(layer_time_samples,        SETTING_TYPE_INT,            false, false, { .i = { 1,         INT_MAX  } }, true,  true),
 	SETTING(min_feed_rate,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       HUGE_VAL } }, false, false),
@@ -2394,6 +2396,20 @@ static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 	m->force_retract = true;
 }
 
+static void do_support_wipe(struct slice *slice, ClipperLib::Path &last_line, struct machine *m, ClipperLib::cInt z)
+{
+	if (config.support_wipe_len > 0.0) {
+		m->force_retract = true;
+		const fl_t xv = last_line[1].X - last_line[0].X;
+		const fl_t yv = last_line[1].Y - last_line[0].Y;
+		const fl_t norm = sqrt(xv * xv + yv * yv);
+		if (norm > config.support_wipe_len * config.scale_constant)
+			linear_move(slice, NULL, m, last_line[1].X - config.support_wipe_len * config.scale_constant * (xv / norm), last_line[1].Y - config.support_wipe_len * config.scale_constant * (yv / norm), z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+		else
+			linear_move(slice, NULL, m, last_line[0].X, last_line[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+	}
+}
+
 static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct machine *m, ClipperLib::cInt z, fl_t min_len, fl_t connect_threshold, fl_t flow_adjust, fl_t feed_rate)
 {
 	ClipperLib::Path last_line(2);
@@ -2421,25 +2437,22 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 				}
 			}
 			bool connect = (!first && !crosses_boundary && best_dist < connect_threshold);
-			if (flip_points) {
-				if (connect)
-					linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
-				else
-					linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
+			if (!first && crosses_boundary)
+				do_support_wipe(slice, last_line, m, z);
+			if (flip_points)
+				std::swap(p[0], p[1]);
+			if (connect)
 				linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
-			}
-			else {
-				if (connect)
-					linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
-				else
-					linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
-				linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
-			}
+			else
+				linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
+			linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
 			last_line = p;
 			first = false;
 		}
 		lines.erase(lines.begin() + best);
 	}
+	if (!first)
+		do_support_wipe(slice, last_line, m, z);
 }
 
 static void plan_insets_weighted(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, bool outside_first)
