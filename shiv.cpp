@@ -392,6 +392,7 @@ struct island {
 	ClipperLib::Paths outer_boundaries;  /* Boundaries when moving outside */
 	ClipperLib::Paths outer_comb_paths;  /* Slightly outset from outer_boundaries */
 	ClipperLib::Paths solid_infill_clip;
+	ClipperLib::Paths infill_boundaries;
 	ClipperLib::Paths exposed_surface;
 	struct cint_rect box;  /* bounding box */
 };
@@ -1257,6 +1258,8 @@ static void generate_insets(struct slice *slice)
 
 		done:
 		do_offset(island.insets[0], island.boundaries, config.extrusion_width / 8.0, 0.0);
+		if (config.connect_solid_infill)
+			do_offset(island.infill_insets, island.infill_boundaries, config.extrusion_width / 8.0, 0.0);
 		if (config.solid_infill_clip_offset > 0.0)
 			do_offset(island.infill_insets, island.solid_infill_clip, config.solid_infill_clip_offset, 0.0);
 		else
@@ -2570,10 +2573,8 @@ static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *
 		if (flip_points)
 			std::swap(line1[0], line1[1]);
 		bool crosses_boundary = false;
-		for (const ClipperLib::Path &bound : island->boundaries) {
-			if (get_boundary_crossing(bound, line0[0], line0[1]) >= 0
-					|| get_boundary_crossing(bound, line0[1], line1[0]) >= 0
-					/* || crosses_exposed_surface(m, island, line1[0].X, line1[0].Y) */) {
+		for (const ClipperLib::Path &bound : island->infill_boundaries) {
+			if (get_boundary_crossing(bound, line0[1], line1[0]) >= 0) {
 				crosses_boundary = true;
 				m->force_retract = true;
 				break;
