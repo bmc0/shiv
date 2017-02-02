@@ -2002,32 +2002,47 @@ static size_t find_nearest_aligned_path(const ClipperLib::Paths &p, ClipperLib::
 	return best;
 }
 
+#define FIND_NEAREST_SEGMENT_USE_LINE 1
 static size_t find_nearest_segment(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, bool *r_flip)
 {
 	bool flip = false;
 	size_t best = 0;
 	fl_t best_dist = HUGE_VAL;
-	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	const ClipperLib::IntPoint p0(x, y);
 	for (size_t i = 0; i < p.size(); ++i) {
 		if (p[i].size() > 2)
 			fprintf(stderr, "error: bug in clipper: line segment has more than two points!\n");
-		fl_t x1_0 = CINT_TO_FL_T(p[i][0].X), y1_0 = CINT_TO_FL_T(p[i][0].Y);
-		fl_t x1_1 = CINT_TO_FL_T(p[i][1].X), y1_1 = CINT_TO_FL_T(p[i][1].Y);
-		fl_t dist0 = (x1_0 - x0) * (x1_0 - x0) + (y1_0 - y0) * (y1_0 - y0);
-		fl_t dist1 = (x1_1 - x0) * (x1_1 - x0) + (y1_1 - y0) * (y1_1 - y0);
-		if (dist0 < best_dist) {
-			best_dist = dist0;
-			best = i;
-			flip = false;
-		}
-		if (dist1 < best_dist) {
-			best_dist = dist1;
-			best = i;
-			flip = true;
-		}
+		#if FIND_NEAREST_SEGMENT_USE_LINE
+			const fl_t dist = distance_to_line(p0, p[i][0], p[i][1]);
+			if (dist < best_dist) {
+				best_dist = dist;
+				best = i;
+			}
+		#else
+			const fl_t dist0 = distance_to_point(p0, p[i][0]);
+			const fl_t dist1 = distance_to_point(p0, p[i][1]);
+			if (dist0 < best_dist) {
+				best_dist = dist0;
+				best = i;
+				flip = false;
+			}
+			else if (dist1 < best_dist) {
+				best_dist = dist1;
+				best = i;
+				flip = true;
+			}
+		#endif
 	}
-	if (r_dist)
-		*r_dist = sqrt(best_dist);
+	#if FIND_NEAREST_SEGMENT_USE_LINE
+		const fl_t d0 = distance_to_point(p0, p[best][0]);
+		const fl_t d1 = distance_to_point(p0, p[best][1]);
+		flip = (d0 > d1) ? true : false;
+		if (r_dist)
+			*r_dist = ((flip) ? d1 : d0) / config.scale_constant;
+	#else
+		if (r_dist)
+			*r_dist = best_dist / config.scale_constant;
+	#endif
 	if (r_flip)
 		*r_flip = flip;
 	return best;
@@ -2526,15 +2541,11 @@ static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct is
 	while (!lines.empty()) {
 		bool flip_points;
 		const size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
-		const ClipperLib::Path &p = lines[best];
-		if (flip_points) {
-			linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-			linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, feed_rate, 1.0, true, false, true);
-		}
-		else {
-			linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-			linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
-		}
+		ClipperLib::Path &p = lines[best];
+		if (flip_points)
+			std::swap(p[0], p[1]);
+		linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+		linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
 		lines.erase(lines.begin() + best);
 	}
 }
