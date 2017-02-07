@@ -179,6 +179,7 @@ static struct {
 	fl_t offset_miter_limit       = 2.0;
 	fl_t offset_arc_tolerance     = 5.0;
 	fl_t fill_threshold           = 0.5;        /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
+	fl_t min_sparse_infill_len    = 0.0;        /* Minimum length for sparse infill lines. */
 	fl_t connected_infill_overlap = 0.25;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
 	fl_t support_angle            = 70.0;       /* Angle threshold for support */
 	fl_t support_margin           = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
@@ -319,6 +320,7 @@ static const struct setting settings[] = {
 	SETTING(offset_miter_limit,        SETTING_TYPE_FL_T,           false, false, { .f = { 2.0,       HUGE_VAL } }, true,  false),
 	SETTING(offset_arc_tolerance,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.25,      HUGE_VAL } }, true,  false),
 	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
 	SETTING(support_angle,             SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       90.0     } }, false, false),
 	SETTING(support_margin,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),  /* FIXME: will cause problems with the combing code if set to 0 */
@@ -1480,6 +1482,15 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 					c.AddPaths(island.inset_gaps[i], ClipperLib::ptClip, true);
 				c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 				ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
+			}
+		}
+		if (config.min_sparse_infill_len > 0.0) {
+			const fl_t min_len = config.min_sparse_infill_len * config.scale_constant;
+			for (size_t i = 0; i < island.sparse_infill.size();) {
+				if (distance_to_point(island.sparse_infill[i][0], island.sparse_infill[i][1]) < min_len)
+					island.sparse_infill.erase(island.sparse_infill.begin() + i);
+				else
+					++i;
 			}
 		}
 	}

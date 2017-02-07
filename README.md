@@ -133,6 +133,7 @@ Setting                    | Default value | Description
 `offset_miter_limit`       |         `2.0` | Sets `ClipperOffset.MiterLimit`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/MiterLimit.htm) for details.
 `offset_arc_tolerance`     |         `5.0` | Sets `ClipperOffset.ArcTolerance`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/ArcTolerance.htm) for details.
 `fill_threshold`           |         `0.5` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
+`min_sparse_infill_len`    |         `0.0` | Minimum length for sparse infill lines.
 `connected_infill_overlap` |        `0.25` | Extra overlap between connected solid infill and shells in units of `extrusion_width`. Extruded volume does not change.
 `support_angle`            |        `70.0` | Angle threshold for support.
 `support_margin`           |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
