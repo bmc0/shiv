@@ -149,6 +149,7 @@ static struct {
 	fl_t retract_min_travel       = 5.0;        /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold        = 30.0;       /* Unconditional retraction threshold */
 	bool retract_within_island    = false;
+	bool retract_after_shells     = false;      /* Retract unconditionally after printing the last shell */
 	bool moving_retract           = false;      /* Do a non-stationary retraction at the end of each shell */
 	fl_t extra_restart_len        = 0.0;        /* Extra material length on restart */
 	int cool_layer                = 2;          /* Turn on part cooling at this layer */
@@ -290,6 +291,7 @@ static const struct setting settings[] = {
 	SETTING(retract_min_travel,        SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(retract_threshold,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(retract_within_island,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(retract_after_shells,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(moving_retract,            SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(extra_restart_len,         SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
 	SETTING(cool_layer,                SETTING_TYPE_INT,            false, false, { .i = { -1,        INT_MAX  } }, true,  true),
@@ -2548,6 +2550,8 @@ static void plan_insets(struct slice *slice, struct island *island, struct machi
 		else
 			plan_insets_weighted(slice, island, m, z, outside_first);
 	}
+	if (config.retract_after_shells)
+		m->force_retract = true;
 }
 
 static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, ClipperLib::cInt z)
