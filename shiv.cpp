@@ -1626,6 +1626,7 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		c.Clear();
+		remove_overlap(s_tmp, s_tmp, config.support_xy_expansion / config.extrusion_width / 2.0);  /* remove unneeded interface regions */
 		c.AddPaths(o->support_interface_pattern, ClipperLib::ptSubject, false);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
