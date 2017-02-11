@@ -142,6 +142,7 @@ static struct {
 	fl_t travel_feed_rate         = 120.0;
 	fl_t first_layer_mult         = 0.5;        /* First layer feed rates (except travel) are multiplied by this value */
 	fl_t coast_len                = 0.0;        /* Length to coast (move with the extruder turned off) at the end of a shell */
+	fl_t wipe_len                 = 0.0;        /* Length to wipe the nozzle after printing a shell. A non-zero value will cause an unconditional retract at the end of each shell. */
 	fl_t retract_len              = 1.0;
 	fl_t retract_speed            = 20.0;
 	fl_t moving_retract_speed     = -0.5;       /* Retrect speed when doing non-stationary retracts. A negative value means a multiple of 'retract_speed'. */
@@ -284,6 +285,7 @@ static const struct setting settings[] = {
 	SETTING(travel_feed_rate,          SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
 	SETTING(first_layer_mult,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
 	SETTING(coast_len,                 SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(wipe_len,                  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(retract_len,               SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(retract_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       HUGE_VAL } }, false, false),
 	SETTING(moving_retract_speed,      SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
@@ -2340,12 +2342,13 @@ static void clip_path_from_end(ClipperLib::Path &p, ClipperLib::Path *clipped_po
 }
 
 /* Do a non-stationary retract at the end of a shell. Expects a standard closed path where the first point is also the end point (in other words, no repeated points). */
-static void moving_retract(const ClipperLib::Path &p, struct slice *slice, struct machine *m, ClipperLib::cInt z, size_t start_idx, fl_t feed_rate)
+static size_t moving_retract(const ClipperLib::Path &p, struct slice *slice, struct machine *m, ClipperLib::cInt z, size_t start_idx, fl_t feed_rate)
 {
 	const fl_t len_ratio = config.moving_retract_speed / feed_rate;
 	const fl_t move_len = config.retract_len / len_ratio;
 	fl_t x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y), l = 0.0, rl = 0.0;
-	for (size_t i = start_idx;; ++i) {
+	size_t i = start_idx;
+	for (;; ++i) {
 		if (i >= p.size())
 			i = 0;
 		const fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
@@ -2371,6 +2374,31 @@ static void moving_retract(const ClipperLib::Path &p, struct slice *slice, struc
 		y0 = y1;
 	}
 	m->is_retracted = true;
+	return i;
+}
+
+/* Wipe the nozzle at the end of a shell */
+static void shell_wipe(const ClipperLib::Path &p, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, size_t start_idx, fl_t feed_rate)
+{
+	fl_t x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y), l = 0.0;
+	for (size_t i = start_idx;; ++i) {
+		if (i >= p.size())
+			i = 0;
+		const fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
+		const fl_t xv = x1 - x0, yv = y1 - y0;
+		const fl_t norm = sqrt(xv * xv + yv * yv);
+		l += norm;
+		if (l >= config.wipe_len) {
+			const fl_t new_x = x1 - (l - config.wipe_len) * (xv / norm), new_y = y1 - (l - config.wipe_len) * (yv / norm);
+			linear_move(slice, island, m, FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y), z, 0.0, feed_rate, 1.0, false, true, false);
+			break;
+		}
+		else if (norm > 0.0) {
+			linear_move(slice, island, m, p[i].X, p[i].Y, z, 0.0, feed_rate, 1.0, false, true, false);
+		}
+		x0 = x1;
+		y0 = y1;
+	}
 }
 
 static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
@@ -2413,7 +2441,11 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true, false);
 	m->is_retracted = false;
 	if (config.moving_retract)
-		moving_retract(p, slice, m, z, start_idx, feed_rate);
+		start_idx = moving_retract(p, slice, m, z, start_idx, feed_rate);
+	if (config.wipe_len > 0.0) {
+		m->force_retract = true;
+		shell_wipe(p, slice, island, m, z, start_idx, feed_rate);
+	}
 }
 
 static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)

@@ -96,6 +96,7 @@ Setting                    | Default value | Description
 `travel_feed_rate`         |       `120.0` | Travel feed rate.
 `first_layer_mult`         |         `0.5` | First layer feed rates (except travel) are multiplied by this value.
 `coast_len`                |         `0.0` | Length to coast (move with the extruder turned off) at the end of a shell. This can reduce start/end blobs if set correctly, but will cause gaps if set too high.
+`wipe_len`                 |         `0.0` | Length to wipe the nozzle after printing a shell. A non-zero value will cause an unconditional retract at the end of each shell.
 `retract_len`              |         `1.0` | Retraction length.
 `retract_speed`            |        `20.0` | Retraction speed.
 `moving_retract_speed`     |        `-0.5` | Retrect speed when doing non-stationary retracts. A negative value means a multiple of `retract_speed`. 
