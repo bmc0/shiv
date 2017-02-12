@@ -1621,12 +1621,13 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		c.Clear();
-		/* do_offset_square(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0); */  /* doesn't seem to work as well as I had hoped... */
+		remove_overlap(s_tmp, s_tmp, config.support_xy_expansion / config.extrusion_width / 2.0);  /* remove unneeded interface regions */
+		/* Expanding the interface regions doesn't seem to work as well as I had hoped... */
+		/* do_offset_square(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0);
 		c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
 		c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-		c.Clear();
-		remove_overlap(s_tmp, s_tmp, config.support_xy_expansion / config.extrusion_width / 2.0);  /* remove unneeded interface regions */
+		c.Clear(); */
 		c.AddPaths(o->support_interface_pattern, ClipperLib::ptSubject, false);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
