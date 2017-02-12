@@ -116,6 +116,7 @@ Setting                    | Default value | Description
 `comb`                     |        `true` | Avoid crossing boundaries.
 `strict_shell_order`       |       `false` | Always do insets in order within an island.
 `align_seams`              |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
+`align_interior_seams`     |        `true` | Align interior seams to the lower left corner if `align_seams` is also true. If false, only exterior seams are aligned.
 `simplify_insets`          |        `true` | Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false)
 `fill_inset_gaps`          |        `true` | Fill gaps between shells.
 `no_solid`                 |       `false` | If true, only generate solid fill on the very top and bottom of the model.

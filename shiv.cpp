@@ -162,6 +162,7 @@ static struct {
 	bool comb                     = true;       /* Avoid crossing boundaries */
 	bool strict_shell_order       = false;      /* Always do insets in order within an island */
 	bool align_seams              = true;       /* Align seams to the lower left corner */
+	bool align_interior_seams     = true;       /* Align interior seams to the lower left corner if 'align_seams' is also true. If false, only exterior seams are aligned. */
 	bool simplify_insets          = true;       /* Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false) */
 	bool fill_inset_gaps          = true;       /* Fill gaps between shells */
 	bool no_solid                 = false;      /* If true, only generate solid fill on the very top and bottom of the model */
@@ -305,6 +306,7 @@ static const struct setting settings[] = {
 	SETTING(comb,                      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(strict_shell_order,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(align_seams,               SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(align_interior_seams,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(simplify_insets,           SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(fill_inset_gaps,           SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(no_solid,                  SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
@@ -1300,7 +1302,7 @@ static void generate_insets(struct slice *slice)
 			}
 		}
 		if (config.align_seams) {
-			for (int i = 0; i < config.shells; ++i) {
+			for (int i = 0; i < ((config.align_interior_seams) ? config.shells : 1); ++i) {
 				for (ClipperLib::Path &p : island.insets[i]) {
 					if (p.size() >= 3) {
 						fl_t lowest = HUGE_VAL;
@@ -2530,7 +2532,7 @@ static void plan_insets_weighted(struct slice *slice, struct island *island, str
 			if (!island->insets[i].empty()) {
 				fl_t dist;
 				size_t r, start_tmp = 0;
-				if (config.align_seams)
+				if (config.align_seams && (config.align_interior_seams || i == 0))
 					r = find_nearest_aligned_path(island->insets[i], m->x, m->y, &dist);
 				else
 					r = find_nearest_path(island->insets[i], m->x, m->y, &dist, &start_tmp);
@@ -2567,7 +2569,7 @@ static void plan_insets_strict_order(struct slice *slice, struct island *island,
 			continue;
 		}
 		size_t best, start = 0;
-		if (config.align_seams)
+		if (config.align_seams && (config.align_interior_seams || i == 0))
 			best = find_nearest_aligned_path(island->insets[i], m->x, m->y, NULL);
 		else
 			best = find_nearest_path(island->insets[i], m->x, m->y, NULL, &start);
