@@ -66,7 +66,7 @@ Setting                    | Default value | Description
 `tolerance`                |       `0.001` | Segment connection tolerance. Large values can be used to close holes in broken models.
 `scale_constant`           |   `1000000.0` | Clipper uses integers, so we need to scale floating point values. Precision is `1/scale_constant` units. Coordinates in the range `±4.6e+18/scale_constant` are accepted.
 `coarseness`               |        `0.01` | Approximate output coarseness. Useful for simplifying high polygon count meshes.
-`extrusion_width`          |         `0.4` | Constrained extrusion width. Should *generally* be set to a value equal to or slightly larger than the nozzle diameter.
+`extrusion_width`          |        `0.45` | Constrained extrusion width. Should *generally* be set to a value equal to or slightly larger than the nozzle diameter.
 `xy_scale_factor`          |       `1.003` | The object is scaled by this ratio in the x and y axes to compensate for shrinkage. Around 1.003 works for PLA. ABS should be somewhere between 1.004 and 1.009.
 `z_scale_factor`           |         `1.0` | The object is scaled by this ratio in the z axis to compensate for shrinkage. Should probably be left at 1 unless a high temperature heated chamber is used.
 `x_center`                 |         `0.0` | X coordinate to center the object on.
@@ -76,7 +76,7 @@ Setting                    | Default value | Description
 `shell_clip`               |        `0.15` | Length to clip off the ends of shells in units of `extrusion_width`.
 `extra_offset`             |         `0.0` | Offset the object by this distance in the xy plane.
 `infill_density`           |         `0.2` | Sparse infill density.
-`infill_pattern`           | `rectilinear` | Sparse infill pattern. Legal values are `grid`, `triangle`, `triangle2`, and `rectilinear`.
+`infill_pattern`           |        `grid` | Sparse infill pattern. Legal values are `grid`, `triangle`, `triangle2`, and `rectilinear`.
 `solid_infill_angle`       |        `45.0` | Solid infill angle in degrees.
 `sparse_infill_angle`      |        `45.0` | Sparse infill angle in degrees.
 `shells`                   |           `2` | Number of loops/perimeters/shells (whatever you want to call them).
@@ -88,7 +88,7 @@ Setting                    | Default value | Description
 `flow_multiplier`          |         `1.0` | Flow rate adjustment to compensate for incorrect E-steps or E-step variation between material types.
 `feed_rate`                |        `50.0` | Base feed rate. Feed rates below are actual speeds (in units/s) if set to a positive value, or a multiple of `feed_rate` if set to a negative value. In other words, `40` is 40 units/s, but `-0.5` is `feed_rate * 0.5` units/s.
 `perimeter_feed_rate`      |        `-0.5` | Outer shell feed rate.
-`loop_feed_rate`           |        `-1.0` | Inner shell(s) feed rate.
+`loop_feed_rate`           |        `-0.7` | Inner shell(s) feed rate.
 `infill_feed_rate`         |        `None` | Sets both `solid_infill_feed_rate` and `sparse_infill_feed_rate`.
 `solid_infill_feed_rate`   |        `-1.0` | Solid infill feed rate.
 `sparse_infill_feed_rate`  |        `-1.0` | Sparse infill feed rate.
@@ -104,7 +104,7 @@ Setting                    | Default value | Description
 `retract_min_travel`       |         `5.0` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
 `retract_threshold`        |        `30.0` | Unconditional retraction threshold.
 `retract_within_island`    |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
-`retract_after_shells`     |       `false` | Retract unconditionally after printing the last shell.
+`retract_after_shells`     |        `true` | Retract unconditionally after printing the last shell.
 `moving_retract`           |       `false` | Do a non-stationary retraction at the end of each shell.
 `extra_restart_len`        |         `0.0` | Extra material length on restart.
 `cool_layer`               |           `2` | Turn on part cooling at this layer (numbered from zero). Set to `-1` to disable cooling.
@@ -117,36 +117,36 @@ Setting                    | Default value | Description
 `strict_shell_order`       |       `false` | Always do insets in order within an island.
 `align_seams`              |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
 `align_interior_seams`     |        `true` | Align interior seams to the lower left corner if `align_seams` is also true. If false, only exterior seams are aligned.
-`simplify_insets`          |        `true` | Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false)
+`simplify_insets`          |        `true` | Do `rdp_simplify_path()` operation on all insets (only the initial outline is simplified if this is false)
 `fill_inset_gaps`          |        `true` | Fill gaps between shells.
 `no_solid`                 |       `false` | If true, only generate solid fill on the very top and bottom of the model.
 `anchor`                   |       `false` | Clip and anchor inset paths.
 `outside_first`            |       `false` | Prefer exterior shells.
 `connect_solid_infill`     |       `false` | Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines.
-`solid_infill_first`       |       `false` | Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to `true` automatically if `solid_infill_feed_rate` and `sparse_infill_feed_rate` are not equal or if `connect_solid_infill` is true.
+`solid_infill_first`       |        `true` | Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to `true` automatically if `solid_infill_feed_rate` and `sparse_infill_feed_rate` are not equal or if `connect_solid_infill` is true.
 `separate_z_travel`        |       `false` | Generate a separate z travel move instead of moving all axes together.
 `combine_all`              |       `false` | Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes.
 `generate_support`         |       `false` | Generate support structure.
-`support_everywhere`       |       `false` | False means only touching build plate.
-`solid_support_base`       |       `false` | Make supports solid at layer 0.
+`support_everywhere`       |        `true` | False means only touching build plate.
+`solid_support_base`       |        `true` | Make supports solid at layer 0.
 `connect_support_lines`    |       `false` | Connect support lines together. Makes the support structure more robust, but harder to remove.
 `poly_fill_type`           |    `non_zero` | Poly fill type for union. Sometimes `even_odd` is useful for broken models with self-intersections and/or incorrect normals.
 `inset_join_type`          |       `miter` | Join type for negative offsets. Legal values are `miter`, `square`, and `round`. `square` tends to retain tiny details better, but `miter` produces simpler (smaller) gcode.
 `outset_join_type`         |       `miter` | Join type for positive offsets. Legal values are `miter`, `square`, and `round`.
 `offset_miter_limit`       |         `2.0` | Sets `ClipperOffset.MiterLimit`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/MiterLimit.htm) for details.
 `offset_arc_tolerance`     |         `5.0` | Sets `ClipperOffset.ArcTolerance`. See the [ClipperLib documentation](http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/ArcTolerance.htm) for details.
-`fill_threshold`           |         `0.5` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
-`min_sparse_infill_len`    |         `0.0` | Minimum length for sparse infill lines.
-`connected_infill_overlap` |        `0.25` | Extra overlap between connected solid infill and shells in units of `extrusion_width`. Extruded volume does not change.
+`fill_threshold`           |        `0.25` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
+`min_sparse_infill_len`    |         `1.0` | Minimum length for sparse infill lines.
+`connected_infill_overlap` |        `0.15` | Extra overlap between connected solid infill and shells in units of `extrusion_width`. Extruded volume does not change.
 `support_angle`            |        `70.0` | Angle threshold for support.
 `support_margin`           |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
 `support_vert_margin`      |           `1` | Vertical spacing between support and model, in layers.
-`interface_layers`         |           `0` | Number of support interface layers.
+`interface_layers`         |           `3` | Number of support interface layers.
 `support_xy_expansion`     |         `2.0` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
-`support_density`          |         `0.3` | Support structure density.
+`support_density`          |         `0.2` | Support structure density.
 `interface_density`        |         `0.7` | Support interface density.
-`support_flow_mult`        |        `0.75` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove.
-`support_wipe_len`         |         `0.0` | Wipe the nozzle over the previously printed line if a boundary will be crossed.
+`support_flow_mult`        |        `0.75` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. The default works well for PLA, but should be increased for materials that have trouble bridging (like PETG).
+`support_wipe_len`         |         `5.0` | Wipe the nozzle over the previously printed line if a boundary will be crossed.
 `min_layer_time`           |         `8.0` | Minimum layer time.
 `layer_time_samples`       |           `5` | Number of samples in the layer time moving average.
 `min_feed_rate`            |        `10.0` | Minimum feed rate.

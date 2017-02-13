@@ -104,7 +104,7 @@ static struct {
 	fl_t tolerance                = 0.001;      /* Segment connection tolerance */
 	fl_t scale_constant           = 1000000.0;  /* Clipper uses integers, so we need to scale floating point values. Precision is 1/scale_constant units. Coordinates in the range `±4.6e+18/scale_constant` are accepted. */
 	fl_t coarseness               = 0.01;       /* Approximate output coarseness. Useful for simplifying high polygon count meshes. */
-	fl_t extrusion_width          = 0.4;        /* Constrained (solid infill) extrusion width */
+	fl_t extrusion_width          = 0.45;       /* Constrained (solid infill) extrusion width */
 	fl_t edge_width;                            /* Unconstrained (edge) extrusion width (calculated from extrusion_width) */
 	fl_t extrusion_area;                        /* Cross-sectional area of an extrusion */
 	fl_t xy_scale_factor          = 1.003;      /* Scale object in x and y axis by this ratio to compensate for shrinkage */
@@ -117,7 +117,7 @@ static struct {
 	fl_t extra_offset             = 0.0;        /* Offset the object by this distance in the xy plane */
 	fl_t edge_offset;                           /* Offset of the outer perimeter (calculated) */
 	fl_t infill_density           = 0.2;        /* Sparse infill density */
-	fill_pattern infill_pattern   = FILL_PATTERN_RECTILINEAR;  /* Sparse infill pattern */
+	fill_pattern infill_pattern   = FILL_PATTERN_GRID;  /* Sparse infill pattern */
 	fl_t solid_infill_angle       = 45.0;       /* Solid infill angle (in degrees) */
 	fl_t sparse_infill_angle      = 45.0;       /* Solid infill angle (in degrees) */
 	int shells                    = 2;          /* Number of loops/perimeters/shells (whatever you want to call them) */
@@ -135,7 +135,7 @@ static struct {
 	/* Feed rates below are actual speeds if set to a positive value, or a multiple of 'feed_rate' if set to a negative value.
 	   In other words, '40' is 40 units/s, but '-0.5' is feed_rate * 0.5 units/s. */
 	fl_t perimeter_feed_rate      = -0.5;       /* Outer shell feed rate */
-	fl_t loop_feed_rate           = -1.0;       /* Inner shell feed rate */
+	fl_t loop_feed_rate           = -0.7;       /* Inner shell feed rate */
 	fl_t solid_infill_feed_rate   = -1.0;
 	fl_t sparse_infill_feed_rate  = -1.0;
 	fl_t support_feed_rate        = -1.0;
@@ -150,7 +150,7 @@ static struct {
 	fl_t retract_min_travel       = 5.0;        /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold        = 30.0;       /* Unconditional retraction threshold */
 	bool retract_within_island    = false;
-	bool retract_after_shells     = false;      /* Retract unconditionally after printing the last shell */
+	bool retract_after_shells     = true;       /* Retract unconditionally after printing the last shell */
 	bool moving_retract           = false;      /* Do a non-stationary retraction at the end of each shell */
 	fl_t extra_restart_len        = 0.0;        /* Extra material length on restart */
 	int cool_layer                = 2;          /* Turn on part cooling at this layer */
@@ -169,30 +169,30 @@ static struct {
 	bool anchor                   = false;      /* Clip and anchor inset paths */
 	bool outside_first            = false;      /* Prefer exterior shells */
 	bool connect_solid_infill     = false;      /* Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines */
-	bool solid_infill_first       = false;      /* Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to true automatically if 'solid_infill_feed_rate' and 'sparse_infill_feed_rate' are not equal or if 'connect_solid_infill' is true. */
+	bool solid_infill_first       = true;       /* Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to true automatically if 'solid_infill_feed_rate' and 'sparse_infill_feed_rate' are not equal or if 'connect_solid_infill' is true. */
 	bool separate_z_travel        = false;      /* Generate a separate z travel move instead of moving all axes together */
 	bool combine_all              = false;      /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
 	bool generate_support         = false;      /* Generate support structure */
-	bool support_everywhere       = false;      /* False means only touching build plate */
-	bool solid_support_base       = false;      /* Make supports solid at layer 0 */
+	bool support_everywhere       = true;       /* False means only touching build plate */
+	bool solid_support_base       = true;       /* Make supports solid at layer 0 */
 	bool connect_support_lines    = false;      /* Connect support lines together. Makes the support structure more robust, but harder to remove. */
 	ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	ClipperLib::JoinType inset_join_type    = ClipperLib::jtMiter;     /* Join type for negative offsets */
 	ClipperLib::JoinType outset_join_type   = ClipperLib::jtMiter;     /* Join type for positive offsets */
 	fl_t offset_miter_limit       = 2.0;
 	fl_t offset_arc_tolerance     = 5.0;
-	fl_t fill_threshold           = 0.5;        /* Remove infill or inset gap fill when it would be narrower than extrusion_width * fill_threshold */
-	fl_t min_sparse_infill_len    = 0.0;        /* Minimum length for sparse infill lines. */
-	fl_t connected_infill_overlap = 0.25;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
+	fl_t fill_threshold           = 0.25;       /* Infill and inset gap fill is removed when it would be narrower than 'extrusion_width' * 'fill_threshold' */
+	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines. */
+	fl_t connected_infill_overlap = 0.15;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
 	fl_t support_angle            = 70.0;       /* Angle threshold for support */
 	fl_t support_margin           = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin       = 1;          /* Vertical spacing between support and model, in layers */
-	int interface_layers          = 0;          /* Number of support interface layers */
+	int interface_layers          = 3;          /* Number of support interface layers */
 	fl_t support_xy_expansion     = 2.0;        /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
-	fl_t support_density          = 0.3;        /* Support structure density */
+	fl_t support_density          = 0.2;        /* Support structure density */
 	fl_t interface_density        = 0.7;        /* Support interface density */
-	fl_t support_flow_mult        = 0.75;       /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. */
-	fl_t support_wipe_len         = 0.0;        /* Wipe the nozzle over the previously printed line if a boundary will be crossed */
+	fl_t support_flow_mult        = 0.75;       /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. The default works well for PLA, but should be increased for materials that have trouble bridging (like PETG). */
+	fl_t support_wipe_len         = 5.0;        /* Wipe the nozzle over the previously printed line if a boundary will be crossed */
 	fl_t min_layer_time           = 8.0;        /* Slow down if the estimated layer time is less than this value */
 	int layer_time_samples        = 5;          /* Number of samples in the layer time moving average */
 	fl_t min_feed_rate            = 10.0;
