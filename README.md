@@ -246,6 +246,5 @@ Preview slices of `infile.stl` in gnuplot:
 ### Feature wishlist:
 
 * ASCII STL, AMF, OBJ, etc. support (only reads binary STL currently)
-* Support structure generation (in progress)
 * Bridge detection
 * Multi-extrusion support
