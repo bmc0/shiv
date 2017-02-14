@@ -2413,9 +2413,9 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 	bool first_point = true, do_anchor = false;
 	if (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * config.extrusion_width * 2.0))
 		total_clip += config.shell_clip * config.extrusion_width;
-	if (config.anchor && path_len_is_greater_than(p, total_clip + config.extrusion_width * 2.0)) {
+	if (config.anchor && path_len_is_greater_than(p, total_clip + config.extrusion_width)) {
 		do_anchor = true;
-		total_clip += config.extrusion_width / 2.0;
+		total_clip += config.extrusion_width / 2.0 * M_PI_4;
 	}
 	ClipperLib::Path lp = p;
 	if (start_idx != 0)
@@ -2434,7 +2434,7 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 		else {
 			fl_t anchor_e_len = 0.0;
 			if (do_anchor) {
-				anchor_e_len = config.extrusion_width / 2.0 * config.extrusion_area * config.flow_multiplier / config.material_area;
+				anchor_e_len = config.extrusion_width / 2.0 * M_PI_4 * config.extrusion_area * config.flow_multiplier / config.material_area;
 				do_anchor = false;
 			}
 			linear_move(slice, island, m, point.X, point.Y, z, anchor_e_len, feed_rate, 1.0, true, false, false);
