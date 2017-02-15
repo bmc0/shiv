@@ -172,10 +172,6 @@ static struct {
 	bool solid_infill_first       = true;       /* Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to true automatically if 'solid_infill_feed_rate' and 'sparse_infill_feed_rate' are not equal or if 'connect_solid_infill' is true. */
 	bool separate_z_travel        = false;      /* Generate a separate z travel move instead of moving all axes together */
 	bool combine_all              = false;      /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
-	bool generate_support         = false;      /* Generate support structure */
-	bool support_everywhere       = true;       /* False means only touching build plate */
-	bool solid_support_base       = true;       /* Make supports solid at layer 0 */
-	bool connect_support_lines    = false;      /* Connect support lines together. Makes the support structure more robust, but harder to remove. */
 	ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	ClipperLib::JoinType inset_join_type    = ClipperLib::jtMiter;     /* Join type for negative offsets */
 	ClipperLib::JoinType outset_join_type   = ClipperLib::jtMiter;     /* Join type for positive offsets */
@@ -184,6 +180,11 @@ static struct {
 	fl_t fill_threshold           = 0.25;       /* Infill and inset gap fill is removed when it would be narrower than 'extrusion_width' * 'fill_threshold' */
 	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines. */
 	fl_t connected_infill_overlap = 0.15;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
+	bool generate_support         = false;      /* Generate support structure */
+	bool support_everywhere       = true;       /* False means only touching build plate */
+	bool solid_support_base       = true;       /* Make supports solid at layer 0 */
+	bool connect_support_lines    = false;      /* Connect support lines together. Makes the support structure more robust, but harder to remove. */
+	bool expand_support_interface = false;      /* Expand support interface by the distance between support lines */
 	fl_t support_angle            = 70.0;       /* Angle threshold for support */
 	fl_t support_margin           = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin       = 1;          /* Vertical spacing between support and model, in layers */
@@ -316,10 +317,6 @@ static const struct setting settings[] = {
 	SETTING(solid_infill_first,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(separate_z_travel,         SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(combine_all,               SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(generate_support,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(support_everywhere,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(solid_support_base,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(connect_support_lines,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(poly_fill_type,            SETTING_TYPE_POLY_FILL_TYPE, false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(inset_join_type,           SETTING_TYPE_JOIN_TYPE,      false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(outset_join_type,          SETTING_TYPE_JOIN_TYPE,      false, false, { .i = { 0,         0        } }, false, false),
@@ -328,6 +325,11 @@ static const struct setting settings[] = {
 	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
+	SETTING(generate_support,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(support_everywhere,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(solid_support_base,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(connect_support_lines,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(expand_support_interface,  SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(support_angle,             SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       90.0     } }, false, false),
 	SETTING(support_margin,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),  /* FIXME: will cause problems with the combing code if set to 0 */
 	SETTING(support_vert_margin,       SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
@@ -1624,12 +1626,13 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		c.Clear();
 		remove_overlap(s_tmp, s_tmp, config.support_xy_expansion / config.extrusion_width / 2.0);  /* remove unneeded interface regions */
-		/* Expanding the interface regions doesn't seem to work as well as I had hoped... */
-		/* do_offset_square(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0);
-		c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
-		c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
-		c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-		c.Clear(); */
+		if (config.expand_support_interface) {
+			do_offset_square(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0);
+			c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
+			c.AddPaths(slice->support_map, ClipperLib::ptClip, true);
+			c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+			c.Clear();
+		}
 		c.AddPaths(o->support_interface_pattern, ClipperLib::ptSubject, false);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);

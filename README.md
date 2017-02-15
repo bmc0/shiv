@@ -126,10 +126,6 @@ Setting                    | Default value | Description
 `solid_infill_first`       |        `true` | Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to `true` automatically if `solid_infill_feed_rate` and `sparse_infill_feed_rate` are not equal or if `connect_solid_infill` is true.
 `separate_z_travel`        |       `false` | Generate a separate z travel move instead of moving all axes together.
 `combine_all`              |       `false` | Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes.
-`generate_support`         |       `false` | Generate support structure.
-`support_everywhere`       |        `true` | False means only touching build plate.
-`solid_support_base`       |        `true` | Make supports solid at layer 0.
-`connect_support_lines`    |       `false` | Connect support lines together. Makes the support structure more robust, but harder to remove.
 `poly_fill_type`           |    `non_zero` | Poly fill type for union. Sometimes `even_odd` is useful for broken models with self-intersections and/or incorrect normals.
 `inset_join_type`          |       `miter` | Join type for negative offsets. Legal values are `miter`, `square`, and `round`. `square` tends to retain tiny details better, but `miter` produces simpler (smaller) gcode.
 `outset_join_type`         |       `miter` | Join type for positive offsets. Legal values are `miter`, `square`, and `round`.
@@ -138,6 +134,11 @@ Setting                    | Default value | Description
 `fill_threshold`           |        `0.25` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
 `min_sparse_infill_len`    |         `1.0` | Minimum length for sparse infill lines.
 `connected_infill_overlap` |        `0.15` | Extra overlap between connected solid infill and shells in units of `extrusion_width`. Extruded volume does not change.
+`generate_support`         |       `false` | Generate support structure.
+`support_everywhere`       |        `true` | False means only touching build plate.
+`solid_support_base`       |        `true` | Make supports solid at layer 0.
+`connect_support_lines`    |       `false` | Connect support lines together. Makes the support structure more robust, but harder to remove.
+`expand_support_interface` |       `false` | Expand support interface by the distance between support lines.
 `support_angle`            |        `70.0` | Angle threshold for support.
 `support_margin`           |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
 `support_vert_margin`      |           `1` | Vertical spacing between support and model, in layers.
