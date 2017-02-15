@@ -1275,7 +1275,7 @@ static void generate_insets(struct slice *slice)
 		else
 			island.solid_infill_clip = island.infill_insets;
 		if (config.comb || config.generate_support)
-			do_offset(island.boundaries, island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
+			do_offset(island.insets[0], island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
 		if (config.comb) {
 			island.comb_paths = island.insets[0];
 			do_offset(island.outer_boundaries, island.outer_comb_paths, config.extrusion_width / 8.0, 0.0);
