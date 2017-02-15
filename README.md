@@ -142,7 +142,8 @@ Setting                    | Default value | Description
 `support_angle`            |        `70.0` | Angle threshold for support.
 `support_margin`           |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
 `support_vert_margin`      |           `1` | Vertical spacing between support and model, in layers.
-`interface_layers`         |           `3` | Number of support interface layers.
+`interface_roof_layers`    |           `3` | Number of support interface layers when looking upwards.
+`interface_floor_layers`   |           `1` | Number of support interface layers when looking downwards.
 `support_xy_expansion`     |         `2.0` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
 `support_density`          |         `0.2` | Support structure density.
 `interface_density`        |         `0.7` | Support interface density.

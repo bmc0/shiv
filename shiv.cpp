@@ -188,7 +188,8 @@ static struct {
 	fl_t support_angle            = 70.0;       /* Angle threshold for support */
 	fl_t support_margin           = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin       = 1;          /* Vertical spacing between support and model, in layers */
-	int interface_layers          = 3;          /* Number of support interface layers */
+	int interface_roof_layers     = 3;          /* Number of support interface layers when looking upwards */
+	int interface_floor_layers    = 1;          /* Number of support interface layers when looking downwards */
 	fl_t support_xy_expansion     = 2.0;        /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
 	fl_t support_density          = 0.2;        /* Support structure density */
 	fl_t interface_density        = 0.7;        /* Support interface density */
@@ -333,7 +334,8 @@ static const struct setting settings[] = {
 	SETTING(support_angle,             SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       90.0     } }, false, false),
 	SETTING(support_margin,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),  /* FIXME: will cause problems with the combing code if set to 0 */
 	SETTING(support_vert_margin,       SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
-	SETTING(interface_layers,          SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
+	SETTING(interface_roof_layers,     SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
+	SETTING(interface_floor_layers,    SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
 	SETTING(support_xy_expansion,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(support_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(interface_density,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
@@ -1604,18 +1606,19 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		ClipperLib::OpenPathsFromPolyTree(s, slice->support_interface_lines);
 	}
-	else if (config.interface_layers > 0) {
+	else if (config.interface_roof_layers > 0 || config.interface_floor_layers > 0) {
 		ClipperLib::Paths s_tmp;
 		c.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
-		for (int i = (slice_index > config.interface_layers) ? -config.interface_layers : -slice_index; slice_index + i < o->n_slices && i <= config.interface_layers; ++i) {
+		for (int i = (slice_index > config.interface_floor_layers) ? -config.interface_floor_layers : -slice_index; slice_index + i < o->n_slices && i <= config.interface_roof_layers; ++i) {
 			if (i != 0) {
 				c.AddPaths(o->slices[slice_index + i].support_map, ClipperLib::ptClip, true);
 				c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 				c.Clear();
-				if (i != config.interface_layers)
+				if (i < config.interface_roof_layers)
 					c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
 			}
 		}
+		c.Clear();
 		c.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
