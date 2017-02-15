@@ -184,15 +184,16 @@ static struct {
 	bool support_everywhere       = true;       /* False means only touching build plate */
 	bool solid_support_base       = true;       /* Make supports solid at layer 0 */
 	bool connect_support_lines    = false;      /* Connect support lines together. Makes the support structure more robust, but harder to remove. */
-	bool expand_support_interface = false;      /* Expand support interface by the distance between support lines */
+	bool expand_support_interface = true;       /* Expand support interface by the distance between support lines */
 	fl_t support_angle            = 70.0;       /* Angle threshold for support */
 	fl_t support_margin           = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin       = 1;          /* Vertical spacing between support and model, in layers */
 	int interface_roof_layers     = 3;          /* Number of support interface layers when looking upwards */
-	int interface_floor_layers    = 1;          /* Number of support interface layers when looking downwards */
+	int interface_floor_layers    = 2;          /* Number of support interface layers when looking downwards */
 	fl_t support_xy_expansion     = 2.0;        /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
 	fl_t support_density          = 0.2;        /* Support structure density */
 	fl_t interface_density        = 0.7;        /* Support interface density */
+	fl_t interface_clip_offset;
 	fl_t support_flow_mult        = 0.75;       /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. The default works well for PLA, but should be increased for materials that have trouble bridging (like PETG). */
 	fl_t support_wipe_len         = 5.0;        /* Wipe the nozzle over the previously printed line if a boundary will be crossed */
 	fl_t min_layer_time           = 8.0;        /* Slow down if the estimated layer time is less than this value */
@@ -339,6 +340,7 @@ static const struct setting settings[] = {
 	SETTING(support_xy_expansion,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(support_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(interface_density,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(interface_clip_offset,     SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
 	SETTING(support_flow_mult,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(support_wipe_len,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
 	SETTING(min_layer_time,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
@@ -428,6 +430,7 @@ struct slice {
 	ClipperLib::PolyTree layer_support_map;
 	ClipperLib::Paths support_map;
 	ClipperLib::Paths support_boundaries;
+	ClipperLib::Paths support_interface_clip;
 	ClipperLib::Paths support_lines;
 	ClipperLib::Paths support_interface_lines;
 	ClipperLib::Paths last_boundaries, last_comb_paths;
@@ -1596,6 +1599,11 @@ static void remove_supports_not_touching_build_plate(struct object *o)
 	}
 }
 
+static void generate_support_interface_clip_regions(struct slice *slice)
+{
+	do_offset_square(slice->support_map, slice->support_interface_clip, config.interface_clip_offset, 0.0);
+}
+
 static void generate_support_lines(struct object *o, struct slice *slice, ssize_t slice_index)
 {
 	ClipperLib::Clipper c;
@@ -1611,7 +1619,7 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		c.AddPaths(slice->support_map, ClipperLib::ptSubject, true);
 		for (int i = (slice_index > config.interface_floor_layers) ? -config.interface_floor_layers : -slice_index; slice_index + i < o->n_slices && i <= config.interface_roof_layers; ++i) {
 			if (i != 0) {
-				c.AddPaths(o->slices[slice_index + i].support_map, ClipperLib::ptClip, true);
+				c.AddPaths(o->slices[slice_index + i].support_interface_clip, ClipperLib::ptClip, true);
 				c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 				c.Clear();
 				if (i < config.interface_roof_layers)
@@ -1623,9 +1631,6 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		c.Clear();
-		const fl_t min_horizontal_interface_half_width = config.extrusion_width * (1.0 - config.edge_overlap) / 2.0 + (0.5 + config.support_margin) * config.edge_width - config.edge_offset - config.extrusion_width / 8.0;
-		const fl_t min_interface_half_width_at_angle = tan(config.support_angle / 180.0 * M_PI) * config.layer_height / 2.0;
-		remove_overlap(s_tmp, s_tmp, MINIMUM(min_horizontal_interface_half_width, min_interface_half_width_at_angle) * 2.0 / config.extrusion_width);  /* remove unneeded interface regions */
 		if (config.expand_support_interface) {
 			do_offset_square(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0);
 			c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
@@ -1768,6 +1773,13 @@ static void slice_object(struct object *o)
 			union_support_maps(&o->slices[i]);
 		if (!config.support_everywhere)
 			remove_supports_not_touching_build_plate(o);
+		if (config.interface_roof_layers > 0 || config.interface_floor_layers > 0) {
+		#ifdef _OPENMP
+			#pragma omp parallel for schedule(dynamic)
+		#endif
+			for (i = 0; i < o->n_slices; ++i)
+				generate_support_interface_clip_regions(&o->slices[i]);
+		}
 	#ifdef _OPENMP
 		#pragma omp parallel for schedule(dynamic)
 	#endif
@@ -2988,6 +3000,9 @@ int main(int argc, char *argv[])
 	config.xy_extra = (config.extra_offset + config.extrusion_width * config.brim_lines) * 2.0;
 	if (config.generate_support)
 		config.xy_extra += (config.support_xy_expansion + (0.5 + config.support_margin) * config.edge_width - config.edge_offset) * 2.0;
+	const fl_t interface_clip_offset_1 = config.extrusion_width * (1.0 - config.edge_overlap) / 2.0 + (0.5 + config.support_margin) * config.edge_width - config.edge_offset - config.extrusion_width / 8.0;
+	const fl_t interface_clip_offset_2 = tan(config.support_angle / 180.0 * M_PI) * config.layer_height;
+	config.interface_clip_offset = MINIMUM(interface_clip_offset_1, interface_clip_offset_2);
 	if (config.generate_raft) {
 		config.xy_extra += config.raft_xy_expansion * 2.0;
 		config.object_z_extra += config.raft_base_layer_height + config.layer_height * (config.raft_vert_margin + config.raft_interface_layers);
