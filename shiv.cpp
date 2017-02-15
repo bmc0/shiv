@@ -1594,11 +1594,6 @@ static void remove_supports_not_touching_build_plate(struct object *o)
 	}
 }
 
-static void remove_small_support_regions(struct slice *slice)
-{
-	remove_overlap(slice->support_map, slice->support_map, 0.5);
-}
-
 static void generate_support_lines(struct object *o, struct slice *slice, ssize_t slice_index)
 {
 	ClipperLib::Clipper c;
@@ -1625,7 +1620,9 @@ static void generate_support_lines(struct object *o, struct slice *slice, ssize_
 		c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 		c.Execute(ClipperLib::ctDifference, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 		c.Clear();
-		remove_overlap(s_tmp, s_tmp, config.support_xy_expansion / config.extrusion_width / 2.0);  /* remove unneeded interface regions */
+		const fl_t min_horizontal_interface_half_width = config.extrusion_width * (1.0 - config.edge_overlap) / 2.0 + (0.5 + config.support_margin) * config.edge_width - config.edge_offset - config.extrusion_width / 8.0;
+		const fl_t min_interface_half_width_at_angle = tan(config.support_angle / 180.0 * M_PI) * config.layer_height / 2.0;
+		remove_overlap(s_tmp, s_tmp, MINIMUM(min_horizontal_interface_half_width, min_interface_half_width_at_angle) * 2.0 / config.extrusion_width);  /* remove unneeded interface regions */
 		if (config.expand_support_interface) {
 			do_offset_square(s_tmp, s_tmp, config.extrusion_width / config.support_density, 0.0);
 			c.AddPaths(s_tmp, ClipperLib::ptSubject, true);
@@ -1768,11 +1765,6 @@ static void slice_object(struct object *o)
 			union_support_maps(&o->slices[i]);
 		if (!config.support_everywhere)
 			remove_supports_not_touching_build_plate(o);
-	#ifdef _OPENMP
-		#pragma omp parallel for schedule(dynamic)
-	#endif
-		for (i = 0; i < o->n_slices; ++i)
-			remove_small_support_regions(&o->slices[i]);
 	#ifdef _OPENMP
 		#pragma omp parallel for schedule(dynamic)
 	#endif
