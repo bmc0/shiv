@@ -21,6 +21,7 @@
 #include <cerrno>
 #include <cmath>
 #include <climits>
+#include <limits>
 #include <chrono>
 #include <algorithm>
 #include <getopt.h>
@@ -34,7 +35,12 @@
 #define SIMPLIFY_EPSILON  (config.coarseness * config.scale_constant)
 #define USE_BOUNDING_BOX  1
 #define SHIV_DEBUG        1
+#ifdef SHIV_FL_T_IS_FLOAT
+#pragma message("fl_t defined as float")
+typedef float fl_t;
+#else
 typedef double fl_t;
+#endif
 
 #define LENGTH(x) (sizeof(x) / sizeof(x[0]))
 #define MINIMUM(a, b) (((a) < (b)) ? (a) : (b))
@@ -243,63 +249,65 @@ struct setting {
 	void *data;
 };
 
+#define FL_T_INF std::numeric_limits<fl_t>::infinity()
+
 #define SETTING(name, type, read_only, is_feed_rate, range_low, range_high, range_low_eq, range_high_eq) \
 	{ #name, type, read_only, is_feed_rate, range_low, range_high, range_low_eq, range_high_eq, (void *) &config.name }
 
 static const struct setting settings[] = {
 	/*      name                       type                      read_only is_feed_rate    range_low  range_high    low_eq high_eq */
-	SETTING(layer_height,              SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
-	SETTING(tolerance,                 SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(scale_constant,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
-	SETTING(coarseness,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(extrusion_width,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(layer_height,              SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
+	SETTING(tolerance,                 SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(scale_constant,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
+	SETTING(coarseness,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(extrusion_width,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
 	SETTING(edge_width,                SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
 	SETTING(extrusion_area,            SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
-	SETTING(xy_scale_factor,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
-	SETTING(z_scale_factor,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
-	SETTING(x_center,                  SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
-	SETTING(y_center,                  SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(xy_scale_factor,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
+	SETTING(z_scale_factor,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
+	SETTING(x_center,                  SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(y_center,                  SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(packing_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(edge_packing_density,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
-	SETTING(shell_clip,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(extra_offset,              SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(shell_clip,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(extra_offset,              SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(edge_offset,               SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
 	SETTING(infill_density,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
 	SETTING(infill_pattern,            SETTING_TYPE_FILL_PATTERN,   false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(solid_infill_angle,        SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
-	SETTING(sparse_infill_angle,       SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(solid_infill_angle,        SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(sparse_infill_angle,       SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(shells,                    SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
-	SETTING(roof_thickness,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(roof_thickness,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(roof_layers,               SETTING_TYPE_INT,            true,  false, { .i = { 0,         0        } }, false, false),
-	SETTING(floor_thickness,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(floor_thickness,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(floor_layers,              SETTING_TYPE_INT,            true,  false, { .i = { 0,         0        } }, false, false),
-	SETTING(min_shell_contact,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(min_shell_contact,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(solid_infill_clip_offset,  SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
-	SETTING(solid_fill_expansion,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(material_diameter,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(solid_fill_expansion,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(material_diameter,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
 	SETTING(material_area,             SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
-	SETTING(flow_multiplier,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(feed_rate,                 SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       HUGE_VAL } }, false, false),
-	SETTING(perimeter_feed_rate,       SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
-	SETTING(loop_feed_rate,            SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(flow_multiplier,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(feed_rate,                 SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       FL_T_INF } }, false, false),
+	SETTING(perimeter_feed_rate,       SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(loop_feed_rate,            SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	/* 'infill_feed_rate' is a special case */
-	SETTING(solid_infill_feed_rate,    SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
-	SETTING(sparse_infill_feed_rate,   SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
-	SETTING(support_feed_rate,         SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
-	SETTING(travel_feed_rate,          SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
-	SETTING(first_layer_mult,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
-	SETTING(coast_len,                 SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(wipe_len,                  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(retract_len,               SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(retract_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       HUGE_VAL } }, false, false),
-	SETTING(moving_retract_speed,      SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
-	SETTING(restart_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
-	SETTING(retract_min_travel,        SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(retract_threshold,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(solid_infill_feed_rate,    SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(sparse_infill_feed_rate,   SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(support_feed_rate,         SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(travel_feed_rate,          SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(first_layer_mult,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
+	SETTING(coast_len,                 SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(wipe_len,                  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(retract_len,               SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(retract_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       FL_T_INF } }, false, false),
+	SETTING(moving_retract_speed,      SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(restart_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(retract_min_travel,        SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(retract_threshold,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(retract_within_island,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(retract_after_shells,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(moving_retract,            SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(extra_restart_len,         SETTING_TYPE_FL_T,           false, false, { .f = { -HUGE_VAL, HUGE_VAL } }, false, false),
+	SETTING(extra_restart_len,         SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(cool_layer,                SETTING_TYPE_INT,            false, false, { .i = { -1,        INT_MAX  } }, true,  true),
 	SETTING(start_gcode,               SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(end_gcode,                 SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
@@ -322,10 +330,10 @@ static const struct setting settings[] = {
 	SETTING(poly_fill_type,            SETTING_TYPE_POLY_FILL_TYPE, false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(inset_join_type,           SETTING_TYPE_JOIN_TYPE,      false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(outset_join_type,          SETTING_TYPE_JOIN_TYPE,      false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(offset_miter_limit,        SETTING_TYPE_FL_T,           false, false, { .f = { 2.0,       HUGE_VAL } }, true,  false),
-	SETTING(offset_arc_tolerance,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.25,      HUGE_VAL } }, true,  false),
-	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(offset_miter_limit,        SETTING_TYPE_FL_T,           false, false, { .f = { 2.0,       FL_T_INF } }, true,  false),
+	SETTING(offset_arc_tolerance,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.25,      FL_T_INF } }, true,  false),
+	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
 	SETTING(generate_support,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(support_everywhere,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
@@ -333,32 +341,32 @@ static const struct setting settings[] = {
 	SETTING(connect_support_lines,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(expand_support_interface,  SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(support_angle,             SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       90.0     } }, false, false),
-	SETTING(support_margin,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),  /* FIXME: will cause problems with the combing code if set to 0 */
+	SETTING(support_margin,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),  /* FIXME: will cause problems with the combing code if set to 0 */
 	SETTING(support_vert_margin,       SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
 	SETTING(interface_roof_layers,     SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
 	SETTING(interface_floor_layers,    SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
-	SETTING(support_xy_expansion,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(support_xy_expansion,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(support_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(interface_density,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(interface_clip_offset,     SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
 	SETTING(support_flow_mult,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
-	SETTING(support_wipe_len,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(min_layer_time,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(support_wipe_len,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(min_layer_time,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(layer_time_samples,        SETTING_TYPE_INT,            false, false, { .i = { 1,         INT_MAX  } }, true,  true),
-	SETTING(min_feed_rate,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       HUGE_VAL } }, false, false),
-	SETTING(brim_width,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
+	SETTING(min_feed_rate,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       FL_T_INF } }, false, false),
+	SETTING(brim_width,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(brim_lines,                SETTING_TYPE_INT,            true,  false, { .i = { 0,         0        } }, false, false),
 	SETTING(brim_adhesion_factor,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
 	SETTING(generate_raft,             SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(raft_xy_expansion,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(raft_base_layer_height,    SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
-	SETTING(raft_base_layer_width,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(raft_xy_expansion,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(raft_base_layer_height,    SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
+	SETTING(raft_base_layer_width,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
 	SETTING(raft_base_layer_density,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
-	SETTING(raft_vert_margin,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, true,  false),
-	SETTING(raft_interface_flow_mult,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       HUGE_VAL } }, false, false),
+	SETTING(raft_vert_margin,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(raft_interface_flow_mult,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
 	SETTING(raft_interface_layers,     SETTING_TYPE_INT,            false, false, { .i = { 0,         INT_MAX  } }, true,  true),
-	SETTING(material_density,          SETTING_TYPE_FL_T,           false, false, { .f = { 0,         HUGE_VAL } }, true,  false),
-	SETTING(material_cost,             SETTING_TYPE_FL_T,           false, false, { .f = { 0,         HUGE_VAL } }, true,  false),
+	SETTING(material_density,          SETTING_TYPE_FL_T,           false, false, { .f = { 0,         FL_T_INF } }, true,  false),
+	SETTING(material_cost,             SETTING_TYPE_FL_T,           false, false, { .f = { 0,         FL_T_INF } }, true,  false),
 };
 
 struct vertex {
@@ -536,11 +544,11 @@ static int set_config_setting(const char *key, const char *value, int n, const c
 						&& ((s->range_high_eq) ? *((fl_t *) s->data) <= s->range.f.h : *((fl_t *) s->data) < s->range.f.h))) {
 					if (path) fprintf(stderr, "error: line %d in %s: %s must be ", n, path, s->name);
 					else      fprintf(stderr, "error: %s must be ", s->name);
-					if (s->range.f.l > -HUGE_VAL && s->range.f.h < HUGE_VAL)
+					if (s->range.f.l > -FL_T_INF && s->range.f.h < FL_T_INF)
 						fprintf(stderr, "within %c%g,%g%c\n", (s->range_low_eq) ? '[' : '(', s->range.f.l, s->range.f.h, (s->range_high_eq) ? ']' : ')');
-					else if (s->range.f.l == -HUGE_VAL)
+					else if (s->range.f.l == -FL_T_INF)
 						fprintf(stderr, "%s %g\n", (s->range_high_eq) ? "<=" : "<", s->range.f.h);
-					else  /* s->range.f.h == HUGE_VAL */
+					else  /* s->range.f.h == FL_T_INF */
 						fprintf(stderr, "%s %g\n", (s->range_low_eq) ? ">=" : ">", s->range.f.l);
 					return 1;
 				}
@@ -1018,7 +1026,7 @@ static fl_t perpendicular_distance_to_line(const ClipperLib::IntPoint &p, const 
 }
 
 /* Note: epsilon is in scaled units */
-static ClipperLib::Path rdp_simplify_path(const ClipperLib::Path &p, double epsilon)
+static ClipperLib::Path rdp_simplify_path(const ClipperLib::Path &p, fl_t epsilon)
 {
 	ClipperLib::Path res;
 	fl_t max_dist = 0.0;
@@ -1048,7 +1056,7 @@ static ClipperLib::Path rdp_simplify_path(const ClipperLib::Path &p, double epsi
 	return res;
 }
 
-static void rdp_simplify_paths(ClipperLib::Paths &paths, double epsilon)
+static void rdp_simplify_paths(ClipperLib::Paths &paths, fl_t epsilon)
 {
 	for (ClipperLib::Path &p : paths)
 		p = rdp_simplify_path(p, epsilon);
@@ -1078,7 +1086,7 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 		++segment_count;
 		best = NULL;
 		flip_points = false;
-		best_dist = HUGE_VAL;
+		best_dist = FL_T_INF;
 		begin = (struct segment *) oseg.h;
 		end = (struct segment *) oseg.t;
 
@@ -1312,7 +1320,7 @@ static void generate_insets(struct slice *slice)
 			for (int i = 0; i < ((config.align_interior_seams) ? config.shells : 1); ++i) {
 				for (ClipperLib::Path &p : island.insets[i]) {
 					if (p.size() >= 3) {
-						fl_t lowest = HUGE_VAL;
+						fl_t lowest = FL_T_INF;
 						auto best = p.begin();
 						for (auto it = best; it != p.end(); ++it) {
 							fl_t v = (*it).X + (*it).Y;
@@ -1977,7 +1985,7 @@ static bool crosses_exposed_surface(const struct machine *m, const struct island
 static size_t find_nearest_segment_endpoint_on_closed_path(const ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
 {
 	size_t best = 0;
-	fl_t best_dist = HUGE_VAL;
+	fl_t best_dist = FL_T_INF;
 	const ClipperLib::IntPoint p0(x, y);
 	for (size_t i = 0, i2 = 1; i < p.size(); ++i) {
 		i2 = (i2 == p.size()) ? 0 : i2;
@@ -1996,7 +2004,7 @@ static size_t find_nearest_segment_endpoint_on_closed_path(const ClipperLib::Pat
 static size_t find_nearest_path(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, size_t *r_start)
 {
 	size_t best = 0, start = 0;
-	fl_t best_dist = HUGE_VAL;
+	fl_t best_dist = FL_T_INF;
 	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
 	for (size_t i = 0; i < p.size(); ++i) {
 		for (size_t k = 0; k < p[i].size(); ++k) {
@@ -2019,7 +2027,7 @@ static size_t find_nearest_path(const ClipperLib::Paths &p, ClipperLib::cInt x, 
 static size_t find_nearest_aligned_path(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
 {
 	size_t best = 0;
-	fl_t best_dist = HUGE_VAL;
+	fl_t best_dist = FL_T_INF;
 	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
 	for (size_t i = 0; i < p.size(); ++i) {
 		fl_t x1 = CINT_TO_FL_T(p[i][0].X), y1 = CINT_TO_FL_T(p[i][0].Y);
@@ -2039,7 +2047,7 @@ static size_t find_nearest_segment(const ClipperLib::Paths &p, ClipperLib::cInt 
 {
 	bool flip = false;
 	size_t best = 0;
-	fl_t best_dist = HUGE_VAL;
+	fl_t best_dist = FL_T_INF;
 	const ClipperLib::IntPoint p0(x, y);
 	for (size_t i = 0; i < p.size(); ++i) {
 		if (p[i].size() > 2)
@@ -2105,7 +2113,7 @@ static fl_t get_partial_path_len(const ClipperLib::Path &p, size_t start, size_t
 
 static bool crosses_boundary_2pt(const ClipperLib::Path &p, const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1, fl_t *r_dist)
 {
-	fl_t best_dist = HUGE_VAL;
+	fl_t best_dist = FL_T_INF;
 	size_t intersections = 0;
 	for (size_t k = 0; k < p.size(); ++k) {
 		const size_t k2 = (k == 0) ? p.size() - 1 : k - 1;
@@ -2125,11 +2133,11 @@ static bool crosses_boundary_2pt(const ClipperLib::Path &p, const ClipperLib::In
 
 static ssize_t nearest_boundary_crossing_2pt(const ClipperLib::Paths &b, const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1)
 {
-	fl_t best_dist = HUGE_VAL;
+	fl_t best_dist = FL_T_INF;
 	ssize_t b_idx = -1;
 	for (size_t i = 0; i < b.size(); ++i) {
 		/* Find all intersections, selecting the nearest one. Ignore if there are fewer than two intersections. */
-		fl_t tmp_dist = HUGE_VAL;
+		fl_t tmp_dist = FL_T_INF;
 		if (crosses_boundary_2pt(b[i], p0, p1, &tmp_dist) && tmp_dist < best_dist) {
 			b_idx = (ssize_t) i;
 			best_dist = tmp_dist;
@@ -2172,7 +2180,7 @@ static void combed_travel(struct slice *slice, struct machine *m, const ClipperL
 		return;
 	ClipperLib::Paths b = bounds;
 	ssize_t last_bound_idx = -1;
-	fl_t closest_dist = HUGE_VAL;
+	fl_t closest_dist = FL_T_INF;
 
 	while (b.size() > 0) {
 		ClipperLib::IntPoint p0(m->x, m->y), p1(x, y);
@@ -2536,7 +2544,7 @@ static void plan_insets_weighted(struct slice *slice, struct island *island, str
 {
 	for (;;) {
 		bool done = true;
-		fl_t best_dist = HUGE_VAL;
+		fl_t best_dist = FL_T_INF;
 		size_t best = 0, inset = 0, start = 0;
 		for (int i = 0; i < config.shells; ++i) {
 			if (!island->insets[i].empty()) {
@@ -2692,7 +2700,7 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 	}
 	while (slice->islands.size() > 0) {
 		size_t best = 0;
-		fl_t best_dist = HUGE_VAL;
+		fl_t best_dist = FL_T_INF;
 		for (size_t i = 0; i < slice->islands.size(); ++i) {
 			fl_t dist;
 			if (config.align_seams)
