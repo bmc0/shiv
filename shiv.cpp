@@ -394,8 +394,12 @@ struct object {
 	ClipperLib::Paths raft_base_layer_pattern;
 };
 
+struct segment_list {
+	struct segment *head, *tail;
+};
+
 struct segment {
-	struct node n;
+	struct segment *next, *prev;
 	fl_t x[2], y[2];
 };
 
@@ -1064,31 +1068,26 @@ static void rdp_simplify_paths(ClipperLib::Paths &paths, fl_t epsilon)
 
 static void generate_outlines(struct slice *slice, ssize_t slice_index)
 {
-	ssize_t i;
-	struct list iseg = NEW_LIST, oseg = NEW_LIST;
-	struct segment *s, *best, *begin, *end;
-	bool flip_points;
-	fl_t best_dist, tolerance_sq = config.tolerance * config.tolerance;
+	struct segment_list iseg = { NULL, NULL }, oseg = { NULL, NULL };
+	const fl_t tolerance_sq = config.tolerance * config.tolerance;
 	ClipperLib::Paths outlines;
 
-	for (i = 0; i < slice->n_seg; ++i)
-		LIST_ADD_TAIL(&iseg, (struct node *) &slice->s[i]);
+	for (ssize_t i = 0; i < slice->n_seg; ++i)
+		LIST_ADD_TAIL(&iseg, &slice->s[i]);
 
-	while (iseg.h) {
+	while (iseg.head) {
 		ssize_t segment_count = 0, flip_count = 0;
 		/* ssize_t inexact_count = 0; */
 		/* Add first segment to the polygon */
-		s = (struct segment *) iseg.h;
+		struct segment *s = iseg.head;
 		LIST_REMOVE_HEAD(&iseg);
-		LIST_ADD_HEAD(&oseg, (struct node *) s);
+		LIST_ADD_HEAD(&oseg, s);
 
 		next_segment:
 		++segment_count;
-		best = NULL;
-		flip_points = false;
-		best_dist = FL_T_INF;
-		begin = (struct segment *) oseg.h;
-		end = (struct segment *) oseg.t;
+		bool flip_points = false;
+		fl_t best_dist = FL_T_INF;
+		struct segment *best = NULL, *begin = oseg.head, *end = oseg.tail;
 
 		/* Check whether the polygon is closed */
 		if (begin != end) {
@@ -1099,8 +1098,8 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 		/* Link up connected segments */
 		LIST_FOREACH(&iseg, s) {
 			if (s->x[0] == end->x[1] && s->y[0] == end->y[1]) {
-				LIST_REMOVE(&iseg, (struct node *) s);
-				LIST_ADD_TAIL(&oseg, (struct node *) s);
+				LIST_REMOVE(&iseg, s);
+				LIST_ADD_TAIL(&oseg, s);
 				goto next_segment;
 			}
 			if (s->x[1] == end->x[1] && s->y[1] == end->y[1]) {
@@ -1114,8 +1113,8 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 				s->y[0] = s->y[1];
 				s->y[1] = t;
 
-				LIST_REMOVE(&iseg, (struct node *) s);
-				LIST_ADD_TAIL(&oseg, (struct node *) s);
+				LIST_REMOVE(&iseg, s);
+				LIST_ADD_TAIL(&oseg, s);
 				goto next_segment;
 			}
 		}
@@ -1152,19 +1151,19 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 				s->y[0] = s->y[1];
 				s->y[1] = t;
 			}
-			LIST_REMOVE(&iseg, (struct node *) s);
-			LIST_ADD_TAIL(&oseg, (struct node *) s);
+			LIST_REMOVE(&iseg, s);
+			LIST_ADD_TAIL(&oseg, s);
 			/* ++inexact_count; */
 			goto next_segment;
 		}
 
 		/* If there are any segments left and more than one output segment, there is probably a hole in the mesh */
-		if (iseg.h && oseg.h != oseg.t)
+		if (iseg.head && oseg.head != oseg.tail)
 			fprintf(stderr, "warning: there is (probably) a hole in the mesh at layer %zd (best_dist = %f)\n", slice_index + 1, sqrt(best_dist));
 		goto next_poly;
 
 		add_poly:
-		if (oseg.h) {
+		if (oseg.head) {
 			ClipperLib::Path poly;
 			LIST_FOREACH(&oseg, s)
 				poly.push_back(FL_T_TO_INTPOINT(s->x[0], s->y[0]));
@@ -1192,7 +1191,7 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 			/* DEBUG("inexact_count = %zd / %zd\n", inexact_count, segment_count); */
 		}
 		next_poly:
-		oseg.h = oseg.t = NULL;
+		oseg.head = oseg.tail = NULL;
 	}
 	free(slice->s);
 	ClipperLib::SimplifyPolygons(outlines, config.poly_fill_type);
