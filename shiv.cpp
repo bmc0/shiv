@@ -465,8 +465,8 @@ static void die(const char *s, int r)
 static char * isolate(char *s, char c)
 {
 	while (*s && *s != c) ++s;
-	*s = '\0';
-	return s + 1;
+	if (*s != '\0') *s++ = '\0';
+	return s;
 }
 
 /* We could get the file size with fseek/ftell and read the whole file in one
