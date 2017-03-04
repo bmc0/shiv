@@ -1165,6 +1165,7 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 		add_poly:
 		if (oseg.head) {
 			ClipperLib::Path poly;
+			poly.reserve(segment_count);
 			LIST_FOREACH(&oseg, s)
 				poly.push_back(FL_T_TO_INTPOINT(s->x[0], s->y[0]));
 			if (SIMPLIFY_EPSILON > 0.0)
