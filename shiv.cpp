@@ -177,6 +177,7 @@ static struct {
 	bool connect_solid_infill     = false;      /* Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines */
 	bool solid_infill_first       = true;       /* Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to true automatically if 'solid_infill_feed_rate' and 'sparse_infill_feed_rate' are not equal or if 'connect_solid_infill' is true. */
 	bool separate_z_travel        = false;      /* Generate a separate z travel move instead of moving all axes together */
+	bool preserve_layer_offset    = false;      /* Preserve layer offset when placing the object on the build plate. Useful for certain multi-part prints. */
 	bool combine_all              = false;      /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
 	ClipperLib::PolyFillType poly_fill_type = ClipperLib::pftNonZero;  /* Set poly fill type for union. Sometimes ClipperLib::pftEvenOdd is useful for broken models with self-intersections and/or incorrect normals. */
 	ClipperLib::JoinType inset_join_type    = ClipperLib::jtMiter;     /* Join type for negative offsets */
@@ -184,7 +185,7 @@ static struct {
 	fl_t offset_miter_limit       = 2.0;
 	fl_t offset_arc_tolerance     = 5.0;
 	fl_t fill_threshold           = 0.25;       /* Infill and inset gap fill is removed when it would be narrower than 'extrusion_width' * 'fill_threshold' */
-	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines. */
+	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines */
 	fl_t connected_infill_overlap = 0.15;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
 	bool generate_support         = false;      /* Generate support structure */
 	bool support_everywhere       = true;       /* False means only touching build plate */
@@ -326,6 +327,7 @@ static const struct setting settings[] = {
 	SETTING(connect_solid_infill,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(solid_infill_first,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(separate_z_travel,         SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(preserve_layer_offset,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(combine_all,               SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(poly_fill_type,            SETTING_TYPE_POLY_FILL_TYPE, false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(inset_join_type,           SETTING_TYPE_JOIN_TYPE,      false, false, { .i = { 0,         0        } }, false, false),
@@ -3057,7 +3059,8 @@ int main(int argc, char *argv[])
 
 	fprintf(stderr, "scale and translate object...\n");
 	scale_object(&o, config.xy_scale_factor * scale_factor, config.xy_scale_factor * scale_factor, config.z_scale_factor * scale_factor);
-	translate_object(&o, -o.c.x + config.x_center, -o.c.y + config.y_center, o.h / 2.0 - o.c.z - z_chop);
+	const fl_t z_translate = (config.preserve_layer_offset) ? round((o.h / 2.0 - o.c.z) / config.layer_height) * config.layer_height : o.h / 2.0 - o.c.z;
+	translate_object(&o, -o.c.x + config.x_center, -o.c.y + config.y_center, z_translate - z_chop);
 	fprintf(stderr, "  center   = (%f, %f, %f)\n", o.c.x, o.c.y, o.c.z);
 	fprintf(stderr, "  height   = %f\n", o.h);
 	fprintf(stderr, "  width    = %f\n", o.w);
