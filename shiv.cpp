@@ -35,11 +35,16 @@
 #define SIMPLIFY_EPSILON  (config.coarseness * config.scale_constant)
 #define USE_BOUNDING_BOX  1
 #define SHIV_DEBUG        1
+
 #ifdef SHIV_FL_T_IS_FLOAT
 #pragma message("fl_t defined as float")
 typedef float fl_t;
 #else
 typedef double fl_t;
+#endif
+
+#ifdef SHIV_SINGLE_THREADED_PATH_PLANNING
+#pragma message("using single-threaded path planner")
 #endif
 
 #define LENGTH(x) (sizeof(x) / sizeof(x[0]))
@@ -2800,6 +2805,8 @@ static void write_gcode_move(FILE *f, const struct g_move *move, struct machine 
 	m->feed_rate = feed_rate;
 }
 
+#define NEW_PLAN_MACHINE(name, obj) struct machine name = { FL_T_TO_CINT(obj->c.x - (obj->w + config.xy_extra) / 2.0), FL_T_TO_CINT(obj->c.y - (obj->d + config.xy_extra) / 2.0), 0, 0.0, 0.0, true, false }
+
 static int write_gcode(const char *path, struct object *o)
 {
 	FILE *f;
@@ -2809,11 +2816,10 @@ static int write_gcode(const char *path, struct object *o)
 		f = fopen(path, "w");
 	if (!f)
 		return 1;
-	struct machine plan_m = {};
-	plan_m.x = FL_T_TO_CINT(o->c.x - (o->w + config.xy_extra) / 2.0);
-	plan_m.y = FL_T_TO_CINT(o->c.y - (o->d + config.xy_extra) / 2.0);
-	plan_m.is_retracted = true;
 	bool is_first_move = true;
+#ifdef SHIV_SINGLE_THREADED_PATH_PLANNING
+	NEW_PLAN_MACHINE(plan_m, o);
+#endif
 	struct machine export_m = {};
 	fl_t total_e = 0.0;
 	fl_t feed_rate_mult = config.first_layer_mult;
@@ -2821,16 +2827,36 @@ static int write_gcode(const char *path, struct object *o)
 	write_gcode_string(config.start_gcode, f, false);
 	if (config.generate_raft) {
 		struct slice raft_dummy_slice;
+	#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
+		NEW_PLAN_MACHINE(plan_m, o);
+	#endif
 		plan_raft(o, &raft_dummy_slice, &plan_m);
+		linear_move(&raft_dummy_slice, NULL, &plan_m, plan_m.x, plan_m.y, plan_m.z, 0.0, config.travel_feed_rate, 1.0, false, true, false);  /* do retract, if needed */
 		fputs("; raft\n", f);
 		for (const struct g_move &move : raft_dummy_slice.moves) {
 			write_gcode_move(f, &move, &export_m, 1.0, is_first_move);
 			is_first_move = false;
 		}
 	}
+#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
+#ifdef _OPENMP
+	#pragma omp parallel for ordered schedule(dynamic)
+#endif
+#endif
 	for (ssize_t i = 0; i < o->n_slices; ++i) {
 		struct slice *slice = &o->slices[i];
+	#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
+		NEW_PLAN_MACHINE(plan_m, o);
+	#endif
 		plan_moves(o, slice, i, &plan_m);
+		linear_move(slice, NULL, &plan_m, plan_m.x, plan_m.y, plan_m.z, 0.0, config.travel_feed_rate, 1.0, false, true, false);  /* do retract, if needed */
+	#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
+	#ifdef _OPENMP
+		#pragma omp ordered
+		#pragma omp critical (write_layer)
+		{
+	#endif
+	#endif
 		fprintf(f, "; layer %zd (z = %f)\n", i, ((fl_t) i) * config.layer_height + config.layer_height + config.object_z_extra);
 		for (struct at_layer_gcode &g : config.at_layer)
 			if (g.layer == i)
@@ -2852,11 +2878,11 @@ static int write_gcode(const char *path, struct object *o)
 		total_e += export_m.e;
 		export_m.e = 0.0;
 		fputs("G92 E0\n", f);
-	}
-	if (!plan_m.is_retracted && config.retract_len > 0.0) {
-		/* Do retract after last layer */
-		struct g_move retract_move = { export_m.x, export_m.y, export_m.z, -config.retract_len, config.retract_speed, false, false, false };
-		write_gcode_move(f, &retract_move, &export_m, feed_rate_mult, false);
+	#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
+	#ifdef _OPENMP
+		}
+	#endif
+	#endif
 	}
 	write_gcode_string(config.cool_off_gcode, f, false);
 	write_gcode_string(config.end_gcode, f, false);
