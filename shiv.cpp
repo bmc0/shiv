@@ -32,9 +32,8 @@
 #include "misc_defs.h"
 #include "list.h"
 
-#define SIMPLIFY_EPSILON  (config.coarseness * config.scale_constant)
-#define USE_BOUNDING_BOX  1
-#define SHIV_DEBUG        1
+#define SIMPLIFY_EPSILON (config.coarseness * config.scale_constant)
+#define SHIV_DEBUG 1
 
 #ifdef SHIV_FL_T_IS_FLOAT
 #pragma message("fl_t defined as float")
@@ -50,6 +49,8 @@ typedef double fl_t;
 #define LENGTH(x) (sizeof(x) / sizeof(x[0]))
 #define MINIMUM(a, b) (((a) < (b)) ? (a) : (b))
 #define MAXIMUM(a, b) (((a) > (b)) ? (a) : (b))
+#define MINIMUM_4(a, b, c, d) MINIMUM(MINIMUM((a), (b)), MINIMUM((c), (d)))
+#define MAXIMUM_4(a, b, c, d) MAXIMUM(MAXIMUM((a), (b)), MAXIMUM((c), (d)))
 #define FL_T_TO_CINT(x) ((ClipperLib::cInt) (lround((x) * config.scale_constant)))
 #define CINT_TO_FL_T(x) (((fl_t) (x)) / config.scale_constant)
 #define FL_T_TO_INTPOINT(x, y)  ClipperLib::IntPoint(FL_T_TO_CINT(x), FL_T_TO_CINT(y))
@@ -392,8 +393,6 @@ struct object {
 	struct slice *slices;
 
 	ClipperLib::Paths solid_infill_patterns[2];
-	int n_sparse_infill_patterns;
-	ClipperLib::Paths sparse_infill_patterns[3];
 	ClipperLib::Paths brim;
 	ClipperLib::Paths raft[2];
 	ClipperLib::Paths support_pattern;
@@ -976,7 +975,6 @@ static void generate_islands(struct slice *slice, const ClipperLib::PolyNode *n)
 	}
 }
 
-#if USE_BOUNDING_BOX
 static void find_bounding_box(struct island *island)
 {
 	bool first = true;
@@ -1002,7 +1000,6 @@ static void find_bounding_box(struct island *island)
 		}
 	}
 }
-#endif
 
 static fl_t distance_to_point(const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1)
 {
@@ -1220,10 +1217,8 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 	if (config.simplify_insets && SIMPLIFY_EPSILON > 0.0)
 		for (struct island &island : slice->islands)
 			rdp_simplify_paths(island.insets[0], SIMPLIFY_EPSILON);
-#if USE_BOUNDING_BOX
 	for (struct island &island : slice->islands)
 		find_bounding_box(&island);
-#endif
 }
 
 static void remove_overlap(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl_t ratio)
@@ -1344,70 +1339,86 @@ static void generate_insets(struct slice *slice)
 	}
 }
 
-static void generate_line_fill_at_angle(ClipperLib::Paths &p, struct vertex &center, fl_t x_len, fl_t y_len, fl_t density, fl_t angle)
+/* FIXME (maybe?): This function uses (0,0) as the origin. Perhaps the object center would be a better choice. */
+static void generate_line_fill_at_angle(ClipperLib::Paths &p, fl_t x0, fl_t y0, fl_t x1, fl_t y1, fl_t density, fl_t angle)
 {
-	const fl_t len_2 = MAXIMUM(x_len, y_len) / M_SQRT2;
-	const fl_t move = config.extrusion_width / density;
 	const fl_t sin_angle = sin(angle), cos_angle = cos(angle);
-	ssize_t steps_2 = lround(ceil(len_2 / move));
-	for (ssize_t i = -steps_2; i <= steps_2; ++i) {
+	const fl_t sin_neg_angle = sin(-angle), cos_neg_angle = cos(-angle);
+	const fl_t move = config.extrusion_width / density;
+	/* compute rotated bounding box (all 4 corners) */
+	/* upper left */
+	const fl_t c0_x = x0 * cos_neg_angle - y0 * sin_neg_angle;
+	const fl_t c0_y = x0 * sin_neg_angle + y0 * cos_neg_angle;
+	/* lower left */
+	const fl_t c1_x = x0 * cos_neg_angle - y1 * sin_neg_angle;
+	const fl_t c1_y = x0 * sin_neg_angle + y1 * cos_neg_angle;
+	/* lower right */
+	const fl_t c2_x = x1 * cos_neg_angle - y1 * sin_neg_angle;
+	const fl_t c2_y = x1 * sin_neg_angle + y1 * cos_neg_angle;
+	/* upper right */
+	const fl_t c3_x = x1 * cos_neg_angle - y0 * sin_neg_angle;
+	const fl_t c3_y = x1 * sin_neg_angle + y0 * cos_neg_angle;
+	/* find start and end indices */
+	const ssize_t start = lround(floor(MINIMUM_4(c0_y, c1_y, c2_y, c3_y) / move));
+	const ssize_t end = lround(ceil(MAXIMUM_4(c0_y, c1_y, c2_y, c3_y) / move));
+	const fl_t min_x = MINIMUM_4(c0_x, c1_x, c2_x, c3_x);
+	const fl_t max_x = MAXIMUM_4(c0_x, c1_x, c2_x, c3_x);
+	for (ssize_t i = start; i <= end; ++i) {
 		ClipperLib::Path line(2);
 		const fl_t y = move * i;
-		line[0].X = FL_T_TO_CINT(cos_angle * -len_2 - sin_angle * y + center.x);
-		line[0].Y = FL_T_TO_CINT(sin_angle * -len_2 + cos_angle * y + center.y);
-		line[1].X = FL_T_TO_CINT(cos_angle * len_2 - sin_angle * y + center.x);
-		line[1].Y = FL_T_TO_CINT(sin_angle * len_2 + cos_angle * y + center.y);
+		line[0].X = FL_T_TO_CINT(cos_angle * min_x - sin_angle * y);
+		line[0].Y = FL_T_TO_CINT(sin_angle * min_x + cos_angle * y);
+		line[1].X = FL_T_TO_CINT(cos_angle * max_x - sin_angle * y);
+		line[1].Y = FL_T_TO_CINT(sin_angle * max_x + cos_angle * y);
 		p.push_back(line);
 	}
 }
 
+/* TODO: Generate support patterns per-region instead of in this function. */
 static void generate_infill_patterns(struct object *o)
 {
-	const fl_t x_len = o->w + config.xy_extra, y_len = o->d + config.xy_extra;
+	const fl_t x_len_2 = (o->w + config.xy_extra) / 2.0, y_len_2 = (o->d + config.xy_extra) / 2.0;
+	const fl_t x0 = o->c.x - x_len_2, y0 = o->c.y - y_len_2, x1 = o->c.x + x_len_2, y1 = o->c.y + y_len_2;
 	const fl_t solid_infill_angle_rad = config.solid_infill_angle / 180.0 * M_PI;
-	const fl_t sparse_infill_angle_rad = config.sparse_infill_angle / 180.0 * M_PI;
 
-	generate_line_fill_at_angle(o->solid_infill_patterns[0], o->c, x_len, y_len, 1.0, solid_infill_angle_rad);
-	generate_line_fill_at_angle(o->solid_infill_patterns[1], o->c, x_len, y_len, 1.0, solid_infill_angle_rad + M_PI_2);
-	if (config.infill_density > 0.0) {
-		switch (config.infill_pattern) {
+	if (config.generate_raft || (config.generate_support && config.solid_support_base)) {
+		/* generate_line_fill_at_angle(o->solid_infill_patterns[0], x0, y0, x1, y1, 1.0, solid_infill_angle_rad); */  /* The raft and support code only uses solid_infill_patterns[1] */
+		generate_line_fill_at_angle(o->solid_infill_patterns[1], x0, y0, x1, y1, 1.0, solid_infill_angle_rad + M_PI_2);
+	}
+	if (config.generate_support) {  /* +- 45deg from solid infill angle */
+		generate_line_fill_at_angle(o->support_pattern, x0, y0, x1, y1, config.support_density, solid_infill_angle_rad - M_PI_4);
+		generate_line_fill_at_angle(o->support_interface_pattern, x0, y0, x1, y1, config.interface_density, solid_infill_angle_rad + M_PI_4);
+	}
+	if (config.generate_raft)
+		generate_line_fill_at_angle(o->raft_base_layer_pattern, x0, y0, x1, y1, (config.extrusion_width / config.raft_base_layer_width) * config.raft_base_layer_density, solid_infill_angle_rad);
+}
+
+static void generate_infill_for_box(ClipperLib::Paths &p, const struct cint_rect &box, fl_t density, fl_t angle, fill_pattern pattern, ssize_t slice_index)
+{
+	if (density > 0.0) {
+		const fl_t angle_rad = angle / 180.0 * M_PI;
+		const fl_t x0 = CINT_TO_FL_T(box.x0), y0 = CINT_TO_FL_T(box.y0), x1 = CINT_TO_FL_T(box.x1), y1 = CINT_TO_FL_T(box.y1);
+		switch (pattern) {
 		case FILL_PATTERN_GRID:
-			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 2.0, sparse_infill_angle_rad);
-			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 2.0, sparse_infill_angle_rad + M_PI_2);
-			o->n_sparse_infill_patterns = 1;
+			generate_line_fill_at_angle(p, x0, y0, x1, y1, density / 2.0, angle_rad);
+			generate_line_fill_at_angle(p, x0, y0, x1, y1, density / 2.0, angle_rad + M_PI_2);
 			break;
 		case FILL_PATTERN_TRIANGLE:
-			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 3.0, sparse_infill_angle_rad);
-			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 3.0, sparse_infill_angle_rad + M_PI / 3.0);
-			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density / 3.0, sparse_infill_angle_rad + 2.0 * M_PI / 3.0);
-			o->n_sparse_infill_patterns = 1;
+			generate_line_fill_at_angle(p, x0, y0, x1, y1, density / 3.0, angle_rad);
+			generate_line_fill_at_angle(p, x0, y0, x1, y1, density / 3.0, angle_rad + M_PI / 3.0);
+			generate_line_fill_at_angle(p, x0, y0, x1, y1, density / 3.0, angle_rad + 2.0 * M_PI / 3.0);
 			break;
 		case FILL_PATTERN_TRIANGLE2:
-			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad);
-			generate_line_fill_at_angle(o->sparse_infill_patterns[1], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad + M_PI / 3.0);
-			generate_line_fill_at_angle(o->sparse_infill_patterns[2], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad + 2.0 * M_PI / 3.0);
-			o->n_sparse_infill_patterns = 3;
+			generate_line_fill_at_angle(p, x0, y0, x1, y1, density, angle_rad + (fl_t) slice_index * M_PI / 3.0);
 			break;
 		case FILL_PATTERN_RECTILINEAR:
 		default:
-			generate_line_fill_at_angle(o->sparse_infill_patterns[0], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad);
-			generate_line_fill_at_angle(o->sparse_infill_patterns[1], o->c, x_len, y_len, config.infill_density, sparse_infill_angle_rad + M_PI_2);
-			o->n_sparse_infill_patterns = 2;
+			generate_line_fill_at_angle(p, x0, y0, x1, y1, density, angle_rad + (fl_t) slice_index * M_PI / 2.0);
 		}
 	}
-	if (config.generate_support) {  /* +- 45deg from solid infill angle */
-		generate_line_fill_at_angle(o->support_pattern, o->c, x_len, y_len, config.support_density, solid_infill_angle_rad - M_PI_4);
-		generate_line_fill_at_angle(o->support_interface_pattern, o->c, x_len, y_len, config.interface_density, solid_infill_angle_rad + M_PI_4);
-	}
-	if (config.generate_raft)
-		generate_line_fill_at_angle(o->raft_base_layer_pattern, o->c, x_len, y_len, (config.extrusion_width / config.raft_base_layer_width) * config.raft_base_layer_density, solid_infill_angle_rad);
 }
 
-#if USE_BOUNDING_BOX
 #define BOUNDING_BOX_INTERSECTS(a, b) (!((b).x0 > (a).x1 || (b).x1 < (a).x0 || (b).y0 < (a).y1 || (b).y1 > (a).y0))
-#else
-#define BOUNDING_BOX_INTERSECTS(a, b) true
-#endif
 
 static void generate_infill(struct object *o, ssize_t slice_index)
 {
@@ -1415,6 +1426,7 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 		ClipperLib::Clipper c;
 		ClipperLib::PolyTree s;
 		ClipperLib::Paths s_tmp;
+		ClipperLib::Paths solid_infill_pattern, sparse_infill_pattern;
 		if (config.roof_layers > 0) {
 			if (slice_index + 1 == o->n_slices)
 				island.exposed_surface = island.infill_insets;
@@ -1436,7 +1448,8 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			}
 			else
 				c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
-			c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
+			generate_infill_for_box(solid_infill_pattern, island.box, 1.0, config.solid_infill_angle, FILL_PATTERN_RECTILINEAR, slice_index);
+			c.AddPaths(solid_infill_pattern, ClipperLib::ptSubject, false);
 			if (config.fill_inset_gaps)
 				for (int i = 0; i < config.shells - 1; ++i)
 					c.AddPaths(island.inset_gaps[i], ClipperLib::ptClip, true);
@@ -1469,7 +1482,8 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				c.Execute(ClipperLib::ctIntersection, s_tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 				c.Clear();
 			}
-			c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
+			generate_infill_for_box(solid_infill_pattern, island.box, 1.0, config.solid_infill_angle, FILL_PATTERN_RECTILINEAR, slice_index);
+			c.AddPaths(solid_infill_pattern, ClipperLib::ptSubject, false);
 			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 			if (config.fill_inset_gaps)
 				for (int i = 0; i < config.shells - 1; ++i)
@@ -1485,7 +1499,8 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				c.Clear();
 				if (config.fill_threshold > 0.0)
 					remove_overlap(s_tmp, s_tmp, config.fill_threshold);
-				c.AddPaths(o->sparse_infill_patterns[slice_index % o->n_sparse_infill_patterns], ClipperLib::ptSubject, false);
+				generate_infill_for_box(sparse_infill_pattern, island.box, config.infill_density, config.sparse_infill_angle, config.infill_pattern, slice_index);
+				c.AddPaths(sparse_infill_pattern, ClipperLib::ptSubject, false);
 				c.AddPaths(s_tmp, ClipperLib::ptClip, true);
 				c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 				ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
@@ -1499,13 +1514,15 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				}
 				else
 					c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
-				c.AddPaths(o->sparse_infill_patterns[slice_index % o->n_sparse_infill_patterns], ClipperLib::ptSubject, false);
+				generate_infill_for_box(sparse_infill_pattern, island.box, config.infill_density, config.sparse_infill_angle, config.infill_pattern, slice_index);
+				c.AddPaths(sparse_infill_pattern, ClipperLib::ptSubject, false);
 				c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 				ClipperLib::OpenPathsFromPolyTree(s, island.sparse_infill);
 			}
 			if (config.fill_inset_gaps) {
 				c.Clear();
-				c.AddPaths(o->solid_infill_patterns[slice_index % 2], ClipperLib::ptSubject, false);
+				generate_infill_for_box(solid_infill_pattern, island.box, 1.0, config.solid_infill_angle, FILL_PATTERN_RECTILINEAR, slice_index);
+				c.AddPaths(solid_infill_pattern, ClipperLib::ptSubject, false);
 				for (int i = 0; i < config.shells - 1; ++i)
 					c.AddPaths(island.inset_gaps[i], ClipperLib::ptClip, true);
 				c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
@@ -1841,13 +1858,11 @@ static void preview_slices(const struct object *o)
 					putc('\n', stdout);
 				}
 			}
-		#if USE_BOUNDING_BOX
 			fprintf(stdout, "%.4e %.4e\n", ((double) island.box.x0) / config.scale_constant, ((double) island.box.y0) / config.scale_constant);
 			fprintf(stdout, "%.4e %.4e\n", ((double) island.box.x1) / config.scale_constant, ((double) island.box.y0) / config.scale_constant);
 			fprintf(stdout, "%.4e %.4e\n", ((double) island.box.x1) / config.scale_constant, ((double) island.box.y1) / config.scale_constant);
 			fprintf(stdout, "%.4e %.4e\n", ((double) island.box.x0) / config.scale_constant, ((double) island.box.y1) / config.scale_constant);
 			fprintf(stdout, "%.4e %.4e\n\n", ((double) island.box.x0) / config.scale_constant, ((double) island.box.y0) / config.scale_constant);
-		#endif
 		}
 		/* Draw support map */
 		for (const ClipperLib::Path &path : o->slices[i].support_map) {
