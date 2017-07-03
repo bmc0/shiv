@@ -808,6 +808,7 @@ static int read_binary_stl(struct object *o, const char *path)
 	int k, p;
 	bool first = true;
 	fl_t top = 0, bottom = 0, left = 0, right = 0, front = 0, back = 0;
+	char header[80];
 	float stl_poly[13];
 	FILE *f;
 
@@ -817,14 +818,17 @@ static int read_binary_stl(struct object *o, const char *path)
 		f = fopen(path, "rb");
 	if (!f)
 		return 1;
-	fseek(f, 80, SEEK_SET);
+	if (fread(header, 1, 80, f) != 80)
+		goto read_fail;
 	o->n = 0;
-	fread(&o->n, 4, 1, f);
+	if (fread(&o->n, 4, 1, f) != 1)
+		goto read_fail;
 	o->t = (struct triangle *) calloc(o->n, sizeof(struct triangle));
 	if (!o->t)
 		die(e_nomem, 2);
 	for (i = 0; i < o->n; ++i) {
-		fread(stl_poly, 50, 1, f);  /* Each polygon entry is 50 bytes */
+		if (fread(stl_poly, 50, 1, f) != 1)  /* Each polygon entry is 50 bytes */
+			goto read_fail;
 		p = 3;
 		for (k = 0; k < 3; ++k) {
 			o->t[i].v[k].x = (fl_t) stl_poly[p++];
@@ -847,6 +851,11 @@ static int read_binary_stl(struct object *o, const char *path)
 	o->c.y = back - o->d / 2.0;
 	o->c.z = top - o->h / 2.0;
 	return 0;
+
+	read_fail:
+	fclose(f);
+	free(o->t);
+	return 2;
 }
 
 static void translate_object(struct object *o, fl_t x, fl_t y, fl_t z)
@@ -3087,6 +3096,7 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "WARNING: edge_width <= extrusion_width: packing_density should be increased\n");
 
 	fprintf(stderr, "load object...\n");
+	memset(&o, 0, sizeof(o));
 	if (read_binary_stl(&o, path)) {
 		fprintf(stderr, "error: failed to read stl: %s: %s\n", path, strerror(errno));
 		return 1;
