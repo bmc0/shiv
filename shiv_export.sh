@@ -9,19 +9,12 @@ if [ -z "$1" ]; then
 	exit 1
 fi
 
-DECOMPRESS=""
 BASE_DIR="$HOME/src/shiv"
 CONFIG_DIR="$BASE_DIR/configs"
 INFILE="$1"
 INFILE_BASE="$(basename "$INFILE")"
 INFILE_DIR="$(dirname "$INFILE")"
 EXT="${INFILE_BASE##*.}"
-case "$EXT" in
-	gz)  DECOMPRESS="gzip -dc" ;;
-	bz2) DECOMPRESS="bzip2 -dc" ;;
-	xz)  DECOMPRESS="xz -dc" ;;
-	lz4) DECOMPRESS="lz4 -dc" ;;
-esac
 OUTFILE="$INFILE_DIR/${INFILE_BASE%%.*}.gcode"
 shift 1
 
@@ -38,8 +31,10 @@ run_shiv() {
 		"$@"
 }
 
-if [ -n "$DECOMPRESS" ]; then
-	$DECOMPRESS "$INFILE" | run_shiv -o "$OUTFILE" - "$@"
-else
-	run_shiv -o "$OUTFILE" "$INFILE" "$@"
-fi
+case "$EXT" in
+	gz)  gzip  -dc "$INFILE" | run_shiv -o "$OUTFILE" "$@" - ;;
+	bz2) bzip2 -dc "$INFILE" | run_shiv -o "$OUTFILE" "$@" - ;;
+	xz)  xz    -dc "$INFILE" | run_shiv -o "$OUTFILE" "$@" - ;;
+	lz4) lz4   -dc "$INFILE" | run_shiv -o "$OUTFILE" "$@" - ;;
+	*)   run_shiv -o "$OUTFILE" "$@" "$INFILE" ;;
+esac
