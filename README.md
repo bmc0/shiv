@@ -181,7 +181,7 @@ printed.
 
 Configuration files are a simple key-value format. Comment lines start with a
 `#`. Lines starting with whitespace are interpreted as a continuation of the
-previous line (except for comment lines).
+previous line.
 
 Example:
 
