@@ -144,13 +144,14 @@ static struct {
 	fl_t material_area;                         /* Cross-sectional area of filament (calculated from material_diameter) */
 	fl_t flow_multiplier          = 1.0;        /* Flow rate adjustment */
 	fl_t feed_rate                = 50.0;       /* Base feed rate (all feed rates are in units/s) */
-	/* Feed rates below are actual speeds if set to a positive value, or a multiple of 'feed_rate' if set to a negative value.
+	/* Feed rates below are actual speeds if set to a positive value, or a multiple of 'feed_rate' (or other if specified) if set to a negative value.
 	   In other words, '40' is 40 units/s, but '-0.5' is feed_rate * 0.5 units/s. */
 	fl_t perimeter_feed_rate      = -0.5;       /* Outer shell feed rate */
 	fl_t loop_feed_rate           = -0.7;       /* Inner shell feed rate */
 	fl_t solid_infill_feed_rate   = -1.0;
 	fl_t sparse_infill_feed_rate  = -1.0;
 	fl_t support_feed_rate        = -1.0;
+	fl_t iron_feed_rate           = -1.0;       /* Top surface ironing feed rate. A negative value means a multiple of 'solid_infill_feed_rate'. */
 	fl_t travel_feed_rate         = 120.0;
 	fl_t first_layer_mult         = 0.5;        /* First layer feed rates (except travel) are multiplied by this value */
 	fl_t coast_len                = 0.0;        /* Length to coast (move with the extruder turned off) at the end of a shell */
@@ -182,6 +183,7 @@ static struct {
 	bool outside_first            = false;      /* Prefer exterior shells */
 	bool connect_solid_infill     = false;      /* Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines */
 	bool solid_infill_first       = true;       /* Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to true automatically if 'solid_infill_feed_rate' and 'sparse_infill_feed_rate' are not equal or if 'connect_solid_infill' is true. */
+	bool iron_top_surface         = false;      /* Run the nozzle over exposed top surfaces a second time */
 	bool separate_z_travel        = false;      /* Generate a separate z travel move instead of moving all axes together */
 	bool preserve_layer_offset    = false;      /* Preserve layer offset when placing the object on the build plate. Useful for certain multi-part prints. */
 	bool combine_all              = false;      /* Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes. */
@@ -193,6 +195,8 @@ static struct {
 	fl_t fill_threshold           = 0.25;       /* Infill and inset gap fill is removed when it would be narrower than 'extrusion_width' * 'fill_threshold' */
 	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines */
 	fl_t connected_infill_overlap = 0.15;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
+	fl_t iron_flow_multiplier     = 0.1;        /* Flow adjustment (relative to normal flow) for top surface ironing */
+	fl_t iron_density             = 2.0;        /* Density of passes for top surface ironing */
 	bool generate_support         = false;      /* Generate support structure */
 	bool support_everywhere       = true;       /* False means only touching build plate */
 	bool solid_support_base       = true;       /* Make supports solid at layer 0 */
@@ -301,6 +305,7 @@ static const struct setting settings[] = {
 	SETTING(solid_infill_feed_rate,    SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(sparse_infill_feed_rate,   SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(support_feed_rate,         SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(iron_feed_rate,            SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(travel_feed_rate,          SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(first_layer_mult,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
 	SETTING(coast_len,                 SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
@@ -332,6 +337,7 @@ static const struct setting settings[] = {
 	SETTING(outside_first,             SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(connect_solid_infill,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(solid_infill_first,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(iron_top_surface,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(separate_z_travel,         SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(preserve_layer_offset,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(combine_all,               SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
@@ -343,6 +349,8 @@ static const struct setting settings[] = {
 	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
+	SETTING(iron_flow_multiplier,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
+	SETTING(iron_density,              SETTING_TYPE_FL_T,           false, false, { .f = { 1.0,       FL_T_INF } }, true,  false),
 	SETTING(generate_support,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(support_everywhere,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(solid_support_base,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
@@ -426,6 +434,7 @@ struct island {
 	ClipperLib::Paths solid_infill_clip;
 	ClipperLib::Paths infill_boundaries;
 	ClipperLib::Paths exposed_surface;
+	ClipperLib::Paths iron_paths;        /* Paths to follow for top surface ironing */
 	struct cint_rect box;  /* bounding box */
 };
 
@@ -1449,6 +1458,31 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			}
 			if (island.exposed_surface.size() > 0)
 				do_offset(island.exposed_surface, island.exposed_surface, -config.extrusion_width, 0.0);
+			if (config.iron_top_surface) {
+				ClipperLib::Paths iron_areas;
+				if (slice_index + 1 == o->n_slices)
+					do_offset(island.insets[0], iron_areas, -config.extrusion_width / 2.0, 0.0);
+				else {
+					do_offset(island.insets[0], iron_areas, -config.extrusion_width / 2.0, 0.0);
+					c.AddPaths(iron_areas, ClipperLib::ptSubject, true);
+					for (const struct island &clip_island : o->slices[slice_index + 1].islands)
+						if (BOUNDING_BOX_INTERSECTS(island.box, clip_island.box))
+							c.AddPaths(clip_island.insets[0], ClipperLib::ptClip, true);
+					c.Execute(ClipperLib::ctDifference, iron_areas, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+					c.Clear();
+				}
+				if (iron_areas.size() > 0) {
+					remove_overlap(iron_areas, iron_areas, 1.0);
+					ClipperLib::Paths iron_pattern;
+					generate_infill_for_box(iron_pattern, island.box, config.iron_density, config.solid_infill_angle, FILL_PATTERN_RECTILINEAR, slice_index + 1);
+					c.AddPaths(iron_pattern, ClipperLib::ptSubject, false);
+					c.AddPaths(iron_areas, ClipperLib::ptClip, true);
+					c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+					c.Clear();
+					ClipperLib::OpenPathsFromPolyTree(s, island.iron_paths);
+					s.Clear();
+				}
+			}
 		}
 		if (config.infill_density == 1.0 || slice_index < config.floor_layers || slice_index + config.roof_layers >= o->n_slices) {
 			if (config.fill_threshold > 0.0) {
@@ -2639,7 +2673,7 @@ static void plan_insets(struct slice *slice, struct island *island, struct machi
 		m->force_retract = true;
 }
 
-static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, ClipperLib::cInt z)
+static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, fl_t flow_adjust, ClipperLib::cInt z)
 {
 	while (!lines.empty()) {
 		bool flip_points;
@@ -2647,8 +2681,8 @@ static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct is
 		ClipperLib::Path &p = lines[best];
 		if (flip_points)
 			std::swap(p[0], p[1]);
-		linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-		linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+		linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, true);
+		linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, true);
 		lines.erase(lines.begin() + best);
 	}
 }
@@ -2753,8 +2787,9 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		if (config.connect_solid_infill)
 			plan_connected_solid_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
 		else
-			plan_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
-		plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, z);
+			plan_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, 1.0, z);
+		plan_infill(island.iron_paths, slice, &island, m, config.iron_feed_rate, config.iron_flow_multiplier, z);
+		plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, 1.0, z);
 		delete[] island.insets;
 		delete[] island.inset_gaps;
 		if (config.comb) {
@@ -3073,6 +3108,7 @@ int main(int argc, char *argv[])
 	config.solid_infill_feed_rate = GET_FEED_RATE(config.solid_infill_feed_rate, config.feed_rate);
 	config.sparse_infill_feed_rate = GET_FEED_RATE(config.sparse_infill_feed_rate, config.feed_rate);
 	config.support_feed_rate = GET_FEED_RATE(config.support_feed_rate, config.feed_rate);
+	config.iron_feed_rate = GET_FEED_RATE(config.iron_feed_rate, config.solid_infill_feed_rate);
 	config.travel_feed_rate = GET_FEED_RATE(config.travel_feed_rate, config.feed_rate);
 	config.moving_retract_speed = GET_FEED_RATE(config.moving_retract_speed, config.retract_speed);
 	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);

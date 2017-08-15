@@ -86,13 +86,14 @@ Setting                    | Default value | Description
 `solid_fill_expansion`     |         `1.0` | Distance to expand solid infill, in units of `extrusion_width`.
 `material_diameter`        |        `1.75` | Diameter of material.
 `flow_multiplier`          |         `1.0` | Flow rate adjustment to compensate for incorrect E-steps or E-step variation between material types.
-`feed_rate`                |        `50.0` | Base feed rate. Feed rates below are actual speeds (in units/s) if set to a positive value, or a multiple of `feed_rate` if set to a negative value. In other words, `40` is 40 units/s, but `-0.5` is `feed_rate * 0.5` units/s.
+`feed_rate`                |        `50.0` | Base feed rate. Feed rates below are actual speeds (in units/s) if set to a positive value, or a multiple of `feed_rate` (or other if specified) if set to a negative value. In other words, `40` is 40 units/s, but `-0.5` is `feed_rate * 0.5` units/s.
 `perimeter_feed_rate`      |        `-0.5` | Outer shell feed rate.
 `loop_feed_rate`           |        `-0.7` | Inner shell(s) feed rate.
 `infill_feed_rate`         |        `None` | Sets both `solid_infill_feed_rate` and `sparse_infill_feed_rate`.
 `solid_infill_feed_rate`   |        `-1.0` | Solid infill feed rate.
 `sparse_infill_feed_rate`  |        `-1.0` | Sparse infill feed rate.
 `support_feed_rate`        |        `-1.0` | Support structure feed rate.
+`iron_feed_rate`           |        `-1.0` | Top surface ironing feed rate. A negative value means a multiple of `solid_infill_feed_rate`.
 `travel_feed_rate`         |       `120.0` | Travel feed rate.
 `first_layer_mult`         |         `0.5` | First layer feed rates (except travel) are multiplied by this value.
 `coast_len`                |         `0.0` | Length to coast (move with the extruder turned off) at the end of a shell. This can reduce start/end blobs if set correctly, but will cause gaps if set too high.
@@ -124,6 +125,7 @@ Setting                    | Default value | Description
 `outside_first`            |       `false` | Prefer exterior shells.
 `connect_solid_infill`     |       `false` | Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines.
 `solid_infill_first`       |        `true` | Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to `true` automatically if `solid_infill_feed_rate` and `sparse_infill_feed_rate` are not equal or if `connect_solid_infill` is true.
+`iron_top_surface`         |       `false` | Run the nozzle over exposed top surfaces a second time.
 `separate_z_travel`        |       `false` | Generate a separate z travel move instead of moving all axes together.
 `preserve_layer_offset`    |       `false` | Preserve layer offset when placing the object on the build plate. Useful for certain multi-part prints.
 `combine_all`              |       `false` | Orients all outlines counter-clockwise. This can be used to fix certain broken models, but it also fills holes.
@@ -135,6 +137,8 @@ Setting                    | Default value | Description
 `fill_threshold`           |        `0.25` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
 `min_sparse_infill_len`    |         `1.0` | Minimum length for sparse infill lines.
 `connected_infill_overlap` |        `0.15` | Extra overlap between connected solid infill and shells in units of `extrusion_width`. Extruded volume does not change.
+`iron_flow_multiplier`     |         `0.1` | Flow adjustment (relative to normal flow) for top surface ironing.
+`iron_density`             |         `2.0` | Density of passes for top surface ironing.
 `generate_support`         |       `false` | Generate support structure.
 `support_everywhere`       |        `true` | False means only touching build plate.
 `solid_support_base`       |        `true` | Make supports solid at layer 0.
