@@ -169,6 +169,7 @@ Setting                    | Default value | Description
 `material_density`         |     `0.00125` | Material density in `arbitrary_mass_unit / input_output_unit^3`. The default is approximately correct for PLA and millimeter input/output units.
 `material_cost`            |     `0.01499` | Material cost in `arbitrary_currency / arbitrary_mass_unit`. The arbitrary mass unit must be the same as used in `material_density`.
 `gcode_variable`           |        `None` | Set a variable that can be expanded within a G-code string option (see "G-code variables" below).
+`v`                        |        `None` | Alias for `gcode_variable`.
 `at_layer`                 |        `None` | Print a string to the output file at the beginning of a given layer (numbered from zero).
 
 #### G-code variables:

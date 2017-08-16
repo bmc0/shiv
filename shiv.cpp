@@ -647,7 +647,7 @@ static int set_config_setting(const char *key, const char *value, int n, const c
 				|| set_config_setting("sparse_infill_feed_rate", value, n, path))
 			return 1;
 	}
-	else if (strcmp(key, "gcode_variable") == 0) {
+	else if (strcmp(key, "gcode_variable") == 0 || strcmp(key, "v") == 0) {
 		char *s = strdup(value);
 		struct user_var uv;
 		uv.value = isolate(s, '=');
