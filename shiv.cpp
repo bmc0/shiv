@@ -2527,7 +2527,7 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 	for (const ClipperLib::IntPoint &point : coast_path)
 		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true, false);
 	m->is_retracted = false;
-	if (config.moving_retract)
+	if (config.moving_retract && config.retract_len > 0.0)
 		start_idx = moving_retract(p, slice, m, z, start_idx, feed_rate);
 	if (config.wipe_len > 0.0) {
 		m->force_retract = true;
