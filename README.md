@@ -241,7 +241,7 @@ Slice `infile.stl` and output gcode to `outfile.gcode`:
 
 Same as above, but with some options set:
 
-	shiv -o outfile.gcode -d 0.5 -n 3 -x 30 -y 30 -O min_layer_time=15 -O gcode_variable=temp=200 infile.stl
+	shiv -o outfile.gcode -d 0.5 -n 3 -x 30 -y 30 -S min_layer_time=15 -S gcode_variable=temp=200 infile.stl
 
 Preview slices of `infile.stl` in gnuplot:
 
