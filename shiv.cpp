@@ -123,8 +123,8 @@ static struct {
 	fl_t z_scale_factor           = 1.0;        /* Scale object in z axis by this ratio to compensate for shrinkage */
 	fl_t x_center                 = 0.0;
 	fl_t y_center                 = 0.0;
-	fl_t packing_density          = 0.98;       /* Solid packing density. Should be slightly less than 1. 0.98 seems to work well for PLA) */
-	fl_t edge_packing_density     = 0.95;       /* Packing density of the contranied half of the outer perimeter (relative to packing_density) */
+	fl_t packing_density          = 0.75;       /* Controls how tightly packed the extrusions are. 0 means just touching and 1 means fully packed. */
+	fl_t edge_packing_density     = 0.5;        /* Controls how much extra negative offset is applied to the outer perimeter to compensate for reduced packing density of its constrained edge. Should be set to 1 when outside_first is true. */
 	fl_t shell_clip               = 0.15;       /* Length to clip off the ends of shells in units of extrusion_width */
 	fl_t extra_offset             = 0.0;        /* Offset the object by this distance in the xy plane */
 	fl_t edge_offset;                           /* Offset of the outer perimeter (calculated) */
@@ -278,8 +278,8 @@ static const struct setting settings[] = {
 	SETTING(z_scale_factor,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, false, false),
 	SETTING(x_center,                  SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(y_center,                  SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
-	SETTING(packing_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
-	SETTING(edge_packing_density,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
+	SETTING(packing_density,           SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
+	SETTING(edge_packing_density,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
 	SETTING(shell_clip,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(extra_offset,              SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(edge_offset,               SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
@@ -3077,11 +3077,16 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
+	if (config.layer_height > config.extrusion_width) {
+		fputs("error: layer_height must not be greater than extrusion_width\n", stderr);
+		return 1;
+	}
+
 	config.roof_layers = lround(config.roof_thickness / config.layer_height);
 	config.floor_layers = lround(config.floor_thickness / config.layer_height);
-	config.extrusion_area = config.extrusion_width * config.layer_height * config.packing_density;
+	config.extrusion_area = config.extrusion_width * config.layer_height - (config.layer_height * config.layer_height - config.layer_height * config.layer_height * M_PI_4) * (1.0 - config.packing_density);
 	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI_4)) / config.layer_height + config.layer_height;
-	config.edge_offset = config.edge_width / -2.0 - (config.extrusion_area * (1.0 - config.edge_packing_density)) / config.layer_height;
+	config.edge_offset = (config.edge_width + (config.edge_width - config.extrusion_width) * (1.0 - config.edge_packing_density)) / -2.0;
 	config.material_area = config.material_diameter * config.material_diameter * M_PI_4;
 	if (config.cool_on_gcode == NULL)
 		config.cool_on_gcode = strdup(DEFAULT_COOL_ON_STR);
@@ -3127,9 +3132,6 @@ int main(int argc, char *argv[])
 #ifdef _OPENMP
 	fprintf(stderr, "OpenMP enabled\n");
 #endif
-
-	if (config.edge_width <= config.extrusion_width)
-		fprintf(stderr, "WARNING: edge_width <= extrusion_width: packing_density should be increased\n");
 
 	fprintf(stderr, "load object...\n");
 	memset(&o, 0, sizeof(o));

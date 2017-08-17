@@ -71,8 +71,8 @@ Setting                    | Default value | Description
 `z_scale_factor`           |         `1.0` | The object is scaled by this ratio in the z axis to compensate for shrinkage. Should probably be left at 1 unless a high temperature heated chamber is used.
 `x_center`                 |         `0.0` | X coordinate to center the object on.
 `y_center`                 |         `0.0` | Y coordinate to center the object on.
-`packing_density`          |        `0.98` | Solid packing density. Should be slightly less than 1. 0.98 seems to work for PLA.
-`edge_packing_density`     |        `0.95` | Packing density of the constrained half of the outer perimeter (relative to `packing_density`).
+`packing_density`          |        `0.75` | Controls how tightly packed the extrusions are. 0 means just touching and 1 means fully packed.
+`edge_packing_density`     |         `0.5` | Controls how much extra negative offset is applied to the outer perimeter to compensate for reduced packing density of its constrained edge. Should be set to 1 when `outside_first` is true.
 `shell_clip`               |        `0.15` | Length to clip off the ends of shells in units of `extrusion_width`.
 `extra_offset`             |         `0.0` | Offset the object by this distance in the xy plane.
 `infill_density`           |         `0.2` | Sparse infill density.
@@ -221,10 +221,6 @@ Example:
 	at_layer=1=
 		M104 S{temp}     ; Set second layer temp
 		M140 S{bed_temp} ; Set second layer bed temp
-	xy_scale_factor=1.003
-	z_scale_factor=1.0
-	packing_density=0.98
-	edge_packing_density=0.94
 	material_diameter=1.735
 	retract_len=0.5
 	retract_speed=20
