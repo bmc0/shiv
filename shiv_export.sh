@@ -9,7 +9,7 @@ if [ -z "$1" ]; then
 	exit 1
 fi
 
-BASE_DIR="$HOME/src/shiv"
+BASE_DIR="$(dirname "$0")"
 CONFIG_DIR="$BASE_DIR/configs"
 INFILE="$1"
 INFILE_BASE="$(basename "$INFILE")"
