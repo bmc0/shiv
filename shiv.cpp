@@ -2912,7 +2912,6 @@ static int write_gcode(const char *path, struct object *o)
 	#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
 	#ifdef _OPENMP
 		#pragma omp ordered
-		#pragma omp critical (write_layer)
 		{
 	#endif
 	#endif
@@ -2932,7 +2931,6 @@ static int write_gcode(const char *path, struct object *o)
 			write_gcode_move(f, &move, &export_m, feed_rate_mult, is_first_move);
 			is_first_move = false;
 		}
-		FREE_VECTOR(slice->moves);
 		feed_rate_mult = 1.0;
 		total_e += export_m.e;
 		export_m.e = 0.0;
@@ -2942,6 +2940,7 @@ static int write_gcode(const char *path, struct object *o)
 		}
 	#endif
 	#endif
+		FREE_VECTOR(slice->moves);
 	}
 	write_gcode_string(config.cool_off_gcode, f, false);
 	write_gcode_string(config.end_gcode, f, false);
