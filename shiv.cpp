@@ -401,7 +401,7 @@ struct object {
 	struct slice *slices;
 
 	ClipperLib::Paths solid_infill_patterns[2];
-	ClipperLib::Paths brim;
+	std::vector<ClipperLib::Paths> brim;
 	ClipperLib::Paths raft[2];
 	ClipperLib::Paths support_pattern;
 	ClipperLib::Paths support_interface_pattern;
@@ -1740,6 +1740,7 @@ static void generate_brim(struct object *o)
 {
 	if (o->n_slices < 1)
 		return;
+	o->brim.reserve(config.brim_lines);
 	for (int i = 1; i <= config.brim_lines; ++i) {
 		ClipperLib::Paths tmp;
 		for (const struct island &island : o->slices[0].islands)
@@ -1749,7 +1750,7 @@ static void generate_brim(struct object *o)
 			ClipperLib::SimplifyPolygons(tmp, ClipperLib::pftNonZero);
 		}
 		do_offset_square(tmp, tmp, config.extrusion_width * i + (config.edge_offset * -2.0 - config.extrusion_width) * (1.0 - config.brim_adhesion_factor) * 2.0, 1.0);
-		o->brim.insert(o->brim.end(), tmp.begin(), tmp.end());
+		o->brim.push_back(tmp);
 	}
 }
 
@@ -1761,7 +1762,8 @@ static void generate_raft(struct object *o)
 	ClipperLib::PolyTree s;
 	ClipperLib::Paths tmp;
 	if (config.brim_lines > 0) {
-		tmp.insert(tmp.end(), o->brim.begin(), o->brim.end());
+		for (const ClipperLib::Paths &p : o->brim)
+			tmp.insert(tmp.end(), p.begin(), p.end());
 		ClipperLib::SimplifyPolygons(tmp, ClipperLib::pftNonZero);
 	}
 	else {
@@ -1932,12 +1934,14 @@ static void preview_slices(const struct object *o)
 		}
 		/* Draw brim */
 		if (i == 0) {
-			for (const ClipperLib::Path &path : o->brim) {
-				if (path.size() >= 3) {
-					for (const ClipperLib::IntPoint &p : path)
-						fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
-					fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
-					putc('\n', stdout);
+			for (const ClipperLib::Paths &paths : o->brim) {
+				for (const ClipperLib::Path &path : paths) {
+					if (path.size() >= 3) {
+						for (const ClipperLib::IntPoint &p : path)
+							fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
+						fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
+						putc('\n', stdout);
+					}
 				}
 			}
 		}
@@ -2537,11 +2541,13 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 
 static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 {
-	while (!o->brim.empty()) {
-		size_t best = 0, start = 0;
-		best = find_nearest_path(o->brim, m->x, m->y, NULL, &start);
-		generate_closed_path_moves(o->brim[best], start, &o->slices[0], NULL, m, z, config.perimeter_feed_rate);
-		o->brim.erase(o->brim.begin() + best);
+	for (ClipperLib::Paths &p : o->brim) {
+		while (!p.empty()) {
+			size_t best = 0, start = 0;
+			best = find_nearest_path(p, m->x, m->y, NULL, &start);
+			generate_closed_path_moves(p[best], start, &o->slices[0], NULL, m, z, config.perimeter_feed_rate);
+			p.erase(p.begin() + best);
+		}
 	}
 	m->force_retract = true;
 }
