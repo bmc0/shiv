@@ -2876,7 +2876,7 @@ static int write_gcode(const char *path, struct object *o)
 	if (!f)
 		return 1;
 	bool is_first_move = true;
-#ifdef SHIV_SINGLE_THREADED_PATH_PLANNING
+#if defined(SHIV_SINGLE_THREADED_PATH_PLANNING)
 	NEW_PLAN_MACHINE(plan_m, o);
 #endif
 	struct machine export_m = {};
@@ -2886,7 +2886,7 @@ static int write_gcode(const char *path, struct object *o)
 	write_gcode_string(config.start_gcode, f, false);
 	if (config.generate_raft) {
 		struct slice raft_dummy_slice;
-	#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
+	#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING)
 		NEW_PLAN_MACHINE(plan_m, o);
 	#endif
 		plan_raft(o, &raft_dummy_slice, &plan_m);
@@ -2897,23 +2897,19 @@ static int write_gcode(const char *path, struct object *o)
 			is_first_move = false;
 		}
 	}
-#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
-#ifdef _OPENMP
+#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING) && defined(_OPENMP)
 	#pragma omp parallel for ordered schedule(dynamic)
-#endif
 #endif
 	for (ssize_t i = 0; i < o->n_slices; ++i) {
 		struct slice *slice = &o->slices[i];
-	#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
+	#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING)
 		NEW_PLAN_MACHINE(plan_m, o);
 	#endif
 		plan_moves(o, slice, i, &plan_m);
 		linear_move(slice, NULL, &plan_m, plan_m.x, plan_m.y, plan_m.z, 0.0, config.travel_feed_rate, 1.0, false, true, false);  /* do retract, if needed */
-	#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
-	#ifdef _OPENMP
+	#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING) && defined(_OPENMP)
 		#pragma omp ordered
 		{
-	#endif
 	#endif
 		fprintf(f, "; layer %zd (z = %f)\n", i, ((fl_t) i) * config.layer_height + config.layer_height + config.object_z_extra);
 		for (struct at_layer_gcode &g : config.at_layer)
@@ -2935,10 +2931,8 @@ static int write_gcode(const char *path, struct object *o)
 		total_e += export_m.e;
 		export_m.e = 0.0;
 		fputs("G92 E0\n", f);
-	#ifndef SHIV_SINGLE_THREADED_PATH_PLANNING
-	#ifdef _OPENMP
+	#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING) && defined(_OPENMP)
 		}
-	#endif
 	#endif
 		FREE_VECTOR(slice->moves);
 	}
