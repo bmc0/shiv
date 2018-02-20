@@ -176,7 +176,7 @@ static struct {
 	bool strict_shell_order       = false;      /* Always do insets in order within an island */
 	bool align_seams              = true;       /* Align seams to the lower left corner */
 	bool align_interior_seams     = true;       /* Align interior seams to the lower left corner if 'align_seams' is also true. If false, only exterior seams are aligned. */
-	bool simplify_insets          = true;       /* Do rdp_simplify_path() operation on all insets (only the initial outline is simplified if this is false) */
+	bool simplify_insets          = true;       /* Do simplify_path() operation on all insets (only the initial outline is simplified if this is false) */
 	bool fill_inset_gaps          = true;       /* Fill gaps between shells */
 	bool no_solid                 = false;      /* If true, only generate solid fill on the very top and bottom of the model */
 	bool anchor                   = false;      /* Clip and anchor inset paths */
@@ -1052,7 +1052,7 @@ static fl_t perpendicular_distance_to_line(const ClipperLib::IntPoint &p, const 
 }
 
 /* Note: epsilon is in scaled units */
-static ClipperLib::Path rdp_simplify_path(const ClipperLib::Path &p, fl_t epsilon)
+static ClipperLib::Path rdp_simplify_path(const ClipperLib::Path &p, const fl_t epsilon)
 {
 	ClipperLib::Path res;
 	fl_t max_dist = 0.0;
@@ -1082,10 +1082,18 @@ static ClipperLib::Path rdp_simplify_path(const ClipperLib::Path &p, fl_t epsilo
 	return res;
 }
 
-static void rdp_simplify_paths(ClipperLib::Paths &paths, fl_t epsilon)
+static void simplify_path(ClipperLib::Path &p, const fl_t epsilon)
+{
+	if (p.size() < 3) return;
+	p.push_back(p[0]);      /* the first and last point must be the same for rdp_simplify_path() to work correctly */
+	p = rdp_simplify_path(p, epsilon);
+	p.erase(p.end() - 1);   /* remove duplicate end point again */
+}
+
+static void simplify_paths(ClipperLib::Paths &paths, const fl_t epsilon)
 {
 	for (ClipperLib::Path &p : paths)
-		p = rdp_simplify_path(p, epsilon);
+		simplify_path(p, epsilon);
 }
 
 static void generate_outlines(struct slice *slice, ssize_t slice_index)
@@ -1191,7 +1199,7 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 			LIST_FOREACH(&oseg, s)
 				poly.push_back(FL_T_TO_INTPOINT(s->x[0], s->y[0]));
 			if (SIMPLIFY_EPSILON > 0.0)
-				poly = rdp_simplify_path(poly, SIMPLIFY_EPSILON);
+				simplify_path(poly, SIMPLIFY_EPSILON);
 			if (config.combine_all) {
 				ClipperLib::Paths polys;
 				/* Remove self-intersections */
@@ -1234,7 +1242,7 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 	generate_islands(slice, &tree);
 	if (config.simplify_insets && SIMPLIFY_EPSILON > 0.0)
 		for (struct island &island : slice->islands)
-			rdp_simplify_paths(island.insets[0], SIMPLIFY_EPSILON);
+			simplify_paths(island.insets[0], SIMPLIFY_EPSILON);
 	for (struct island &island : slice->islands)
 		find_bounding_box(&island);
 }
@@ -1286,13 +1294,13 @@ static void generate_insets(struct slice *slice)
 			for (int i = 1; i < config.shells; ++i) {
 				do_offset(island.insets[i - 1], island.insets[i], -config.extrusion_width, 1.0);
 				if (config.simplify_insets && SIMPLIFY_EPSILON > 0.0)
-					rdp_simplify_paths(island.insets[i], SIMPLIFY_EPSILON);
+					simplify_paths(island.insets[i], SIMPLIFY_EPSILON);
 				if (island.insets[i].size() == 0)  /* break if nothing is being generated */
 					goto done;
 			}
 			do_offset(island.insets[config.shells - 1], island.infill_insets, -config.extrusion_width / 2.0, 0.0);
 			if (SIMPLIFY_EPSILON > 0.0)
-				rdp_simplify_paths(island.infill_insets, SIMPLIFY_EPSILON);
+				simplify_paths(island.infill_insets, SIMPLIFY_EPSILON);
 		}
 		else {
 			/* The offset distance here is not *technically* correct, but I'm not sure one can expect high dimensional accuracy when only printing infill anyway... */
