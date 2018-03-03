@@ -796,7 +796,8 @@ static int read_config(const char *path)
 		if (next) {
 			while (next && (next[1] == ' ' || next[1] == '\t'))
 				next = strchr(next + 1, '\n');
-			next = isolate(next, '\n');
+			if (next)
+				next = isolate(next, '\n');
 		}
 		if (*key != '\0' && *key != '#') {
 			value = isolate(key, '=');
