@@ -182,7 +182,6 @@ static struct {
 	bool anchor                   = false;      /* Clip and anchor inset paths */
 	bool outside_first            = false;      /* Prefer exterior shells */
 	bool connect_solid_infill     = false;      /* Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines */
-	bool solid_infill_first       = true;       /* Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to true automatically if 'solid_infill_feed_rate' and 'sparse_infill_feed_rate' are not equal or if 'connect_solid_infill' is true. */
 	bool iron_top_surface         = false;      /* Run the nozzle over exposed top surfaces a second time */
 	bool separate_z_travel        = false;      /* Generate a separate z travel move instead of moving all axes together */
 	bool preserve_layer_offset    = false;      /* Preserve layer offset when placing the object on the build plate. Useful for certain multi-part prints. */
@@ -193,6 +192,7 @@ static struct {
 	fl_t offset_miter_limit       = 2.0;
 	fl_t offset_arc_tolerance     = 5.0;
 	fl_t fill_threshold           = 0.25;       /* Infill and inset gap fill is removed when it would be narrower than 'extrusion_width' * 'fill_threshold' */
+	fl_t infill_smooth_threshold  = 2.83;       /* Solid infill lines are converted to a smooth curve when adjacent lines are shorter than 'extrusion_width' * 'infill_smooth_threshold'. Has no effect if 'connect_solid_infill' is true. */
 	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines */
 	fl_t connected_infill_overlap = 0.15;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
 	fl_t iron_flow_multiplier     = 0.1;        /* Flow adjustment (relative to normal flow) for top surface ironing */
@@ -336,7 +336,6 @@ static const struct setting settings[] = {
 	SETTING(anchor,                    SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(outside_first,             SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(connect_solid_infill,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(solid_infill_first,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(iron_top_surface,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(separate_z_travel,         SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(preserve_layer_offset,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
@@ -347,6 +346,7 @@ static const struct setting settings[] = {
 	SETTING(offset_miter_limit,        SETTING_TYPE_FL_T,           false, false, { .f = { 2.0,       FL_T_INF } }, true,  false),
 	SETTING(offset_arc_tolerance,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.25,      FL_T_INF } }, true,  false),
 	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(infill_smooth_threshold,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       4.0      } }, true,  false),
 	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
 	SETTING(iron_flow_multiplier,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
@@ -2702,6 +2702,70 @@ static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct is
 	}
 }
 
+static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, ClipperLib::cInt z)
+{
+	if (lines.empty())
+		return;
+	const fl_t p_dist_fudge = config.extrusion_width / 8.0;
+	bool flip_points, last_was_smoothed = false;
+	size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
+	ClipperLib::Path line0 = lines[best];
+	lines.erase(lines.begin() + best);
+	if (flip_points)
+		std::swap(line0[0], line0[1]);
+	while (!lines.empty()) {
+		fl_t best_dist;
+		best = find_nearest_segment(lines, line0[1].X, line0[1].Y, &best_dist, &flip_points);
+		ClipperLib::Path line1 = lines[best];
+		lines.erase(lines.begin() + best);
+		if (flip_points)
+			std::swap(line1[0], line1[1]);
+		bool crosses_boundary = false;
+		for (const ClipperLib::Path &bound : island->infill_boundaries) {
+			if (get_boundary_crossing(bound, line0[1], line1[0]) >= 0) {
+				crosses_boundary = true;
+				m->force_retract = true;
+				break;
+			}
+		}
+		const fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
+		const fl_t len_line0 = distance_to_point(line0[0], line0[1]) / config.scale_constant;
+		const fl_t len_line1 = distance_to_point(line1[0], line1[1]) / config.scale_constant;
+		if (!crosses_boundary
+				&& p_dist < config.extrusion_width + p_dist_fudge && p_dist > config.extrusion_width - p_dist_fudge
+				&& best_dist < config.extrusion_width * 2.0
+				&& len_line0 <= config.extrusion_width * config.infill_smooth_threshold
+				&& len_line1 <= config.extrusion_width * config.infill_smooth_threshold) {
+			const ClipperLib::IntPoint line0_midpoint((line0[0].X + line0[1].X) / 2, (line0[0].Y + line0[1].Y) / 2);
+			const ClipperLib::IntPoint line1_midpoint((line1[0].X + line1[1].X) / 2, (line1[0].Y + line1[1].Y) / 2);
+			const fl_t extrude_dist = distance_to_point(line0_midpoint, line1_midpoint) / config.scale_constant;
+			const fl_t extrude_ratio = (len_line0 + len_line1) / 2.0 / extrude_dist;
+			if (!last_was_smoothed) {
+				/* move to line0 start */
+				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+				/* extrude to line0_midpoint */
+				linear_move(slice, island, m, line0_midpoint.X, line0_midpoint.Y, z, 0.0, feed_rate, 1.0, true, false, true);
+			}
+			/* extrude to line1_midpoint */
+			linear_move(slice, island, m, line1_midpoint.X, line1_midpoint.Y, z, 0.0, feed_rate / extrude_ratio, extrude_ratio, true, false, true);
+			last_was_smoothed = true;
+		}
+		else {
+			if (last_was_smoothed)  /* machine is at line1_midpoint (now line0) from last cycle; we will extrude the last half of line0 */
+				last_was_smoothed = false;
+			else /* normal extrusion: move to start of line0 */
+				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+		}
+		line0 = line1;
+	}
+	if (last_was_smoothed)  /* machine is at line1_midpoint (now line0) from last cycle; we will extrude the last half of line0 */
+		last_was_smoothed = false;
+	else /* normal extrusion: move to start of line0 */
+		linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+	linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+}
+
 static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, ClipperLib::cInt z)
 {
 	if (lines.empty())
@@ -2794,15 +2858,10 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		}
 		struct island &island = slice->islands[best];
 		plan_insets(slice, &island, m, z, config.outside_first || layer_num == 0);
-		if (!config.solid_infill_first) {
-			/* Concat sparse infill into solid infill vector so the infill pathing is planned together */
-			island.solid_infill.insert(island.solid_infill.end(), island.sparse_infill.begin(), island.sparse_infill.end());
-			FREE_VECTOR(island.sparse_infill);
-		}
 		if (config.connect_solid_infill)
 			plan_connected_solid_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
 		else
-			plan_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, 1.0, z);
+			plan_smoothed_solid_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
 		plan_infill(island.iron_paths, slice, &island, m, config.iron_feed_rate, config.iron_flow_multiplier, z);
 		plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, 1.0, z);
 		delete[] island.insets;
@@ -3125,8 +3184,6 @@ int main(int argc, char *argv[])
 	config.travel_feed_rate = GET_FEED_RATE(config.travel_feed_rate, config.feed_rate);
 	config.moving_retract_speed = GET_FEED_RATE(config.moving_retract_speed, config.retract_speed);
 	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);
-	if (config.solid_infill_feed_rate != config.sparse_infill_feed_rate || config.connect_solid_infill)
-		config.solid_infill_first = true;
 
 	fprintf(stderr, "configuration:\n");
 	fprintf(stderr, "  %-24s = %f\n", "scale_factor (-s)", scale_factor);
