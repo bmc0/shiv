@@ -51,7 +51,7 @@ typedef double fl_t;
 #define MAXIMUM(a, b) (((a) > (b)) ? (a) : (b))
 #define MINIMUM_4(a, b, c, d) MINIMUM(MINIMUM((a), (b)), MINIMUM((c), (d)))
 #define MAXIMUM_4(a, b, c, d) MAXIMUM(MAXIMUM((a), (b)), MAXIMUM((c), (d)))
-#define FL_T_TO_CINT(x) ((ClipperLib::cInt) (lround((x) * config.scale_constant)))
+#define FL_T_TO_CINT(x) ((ClipperLib::cInt) (llround((x) * config.scale_constant)))
 #define CINT_TO_FL_T(x) (((fl_t) (x)) / config.scale_constant)
 #define FL_T_TO_INTPOINT(x, y)  ClipperLib::IntPoint(FL_T_TO_CINT(x), FL_T_TO_CINT(y))
 #define INTPOINT_TO_FL_T(point) CINT_TO_FL_T((point).X), CINT_TO_FL_T((point).Y)
