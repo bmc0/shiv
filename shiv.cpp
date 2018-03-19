@@ -2697,7 +2697,7 @@ static void plan_infill_simple(ClipperLib::Paths &lines, struct slice *slice, st
 
 static size_t find_next_solid_infill_segment(const ClipperLib::Paths &p, ClipperLib::Path &line0, fl_t *r_dist, bool *r_flip, bool *r_is_adjacent)
 {
-	const fl_t p_dist_fudge = config.extrusion_width / 8.0;
+	const fl_t adjacent_dist_fudge = config.extrusion_width / 8.0;
 	bool best_flip = false, best_is_adjacent = false;
 	size_t best = 0;
 	fl_t best_dist = FL_T_INF, best_adj_dist = FL_T_INF;
@@ -2706,23 +2706,28 @@ static size_t find_next_solid_infill_segment(const ClipperLib::Paths &p, Clipper
 		if (p[i].size() > 2)
 			fprintf(stderr, "error: bug in clipper: line segment has more than two points!\n");
 		ClipperLib::Path line1 = p[i];
-		const fl_t dist = distance_to_line(line0[1], line1[0], line1[1]);
-		const fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
-		const fl_t dist0 = distance_to_point(line0[1], line1[0]);
-		const fl_t dist1 = distance_to_point(line0[1], line1[1]);
-		const bool is_adjacent = p_dist < config.extrusion_width + p_dist_fudge && p_dist > config.extrusion_width - p_dist_fudge;
-		if (dist0 > dist1)
+		const fl_t l_dist0 = distance_to_line(line0[0], line1[0], line1[1]);
+		const fl_t l_dist1 = distance_to_line(line0[1], line1[0], line1[1]);
+		const fl_t l_dist2 = distance_to_line(line1[0], line0[0], line0[1]);
+		const fl_t l_dist3 = distance_to_line(line1[1], line0[0], line0[1]);
+		const fl_t min_dist = MINIMUM_4(l_dist0, l_dist1, l_dist2, l_dist3);
+		const fl_t scaled_min_dist = min_dist / config.scale_constant;
+		const fl_t scaled_p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
+		const fl_t pt_dist0 = distance_to_point(line0[1], line1[0]);
+		const fl_t pt_dist1 = distance_to_point(line0[1], line1[1]);
+		const bool is_adjacent = scaled_p_dist < config.extrusion_width + adjacent_dist_fudge && scaled_p_dist > config.extrusion_width - adjacent_dist_fudge && scaled_min_dist < config.extrusion_width * 2.0;
+		if (pt_dist0 > pt_dist1)
 			std::swap(line1[0], line1[1]);
 		const bool is_opposite_dir = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[1].Y));
-		fl_t adj_dist = dist;
+		fl_t adj_dist = l_dist1;
 		if (!is_opposite_dir)
 			adj_dist *= 2.0;
 		if (!is_adjacent)
 			adj_dist *= 2.0;
 		if (adj_dist < best_adj_dist) {
 			best_adj_dist = adj_dist;
-			best_flip = (is_adjacent && !is_opposite_dir) || (dist0 > dist1);
-			best_dist = (best_flip) ? dist1 : dist0;
+			best_flip = (is_adjacent && !is_opposite_dir) || (pt_dist0 > pt_dist1);
+			best_dist = (best_flip) ? pt_dist1 : pt_dist0;
 			best_is_adjacent = is_adjacent;
 			best = i;
 		}
