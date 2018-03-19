@@ -192,7 +192,7 @@ static struct {
 	fl_t offset_miter_limit       = 2.0;
 	fl_t offset_arc_tolerance     = 5.0;
 	fl_t fill_threshold           = 0.25;       /* Infill and inset gap fill is removed when it would be narrower than 'extrusion_width' * 'fill_threshold' */
-	fl_t infill_smooth_threshold  = 2.83;       /* Solid infill lines are converted to a smooth curve when adjacent lines are shorter than 'extrusion_width' * 'infill_smooth_threshold'. Has no effect if 'connect_solid_infill' is true. */
+	fl_t infill_smooth_threshold  = 2.0;        /* Solid infill lines are converted to a smooth curve when the region being filled is narrower than 'extrusion_width' * 'infill_smooth_threshold' */
 	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines */
 	fl_t connected_infill_overlap = 0.15;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
 	fl_t iron_flow_multiplier     = 0.1;        /* Flow adjustment (relative to normal flow) for top surface ironing */
@@ -346,7 +346,7 @@ static const struct setting settings[] = {
 	SETTING(offset_miter_limit,        SETTING_TYPE_FL_T,           false, false, { .f = { 2.0,       FL_T_INF } }, true,  false),
 	SETTING(offset_arc_tolerance,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.25,      FL_T_INF } }, true,  false),
 	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
-	SETTING(infill_smooth_threshold,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       4.0      } }, true,  false),
+	SETTING(infill_smooth_threshold,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       4.0      } }, true,  true),
 	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
 	SETTING(iron_flow_multiplier,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
@@ -432,7 +432,7 @@ struct island {
 	ClipperLib::Paths outer_boundaries;  /* Boundaries when moving outside */
 	ClipperLib::Paths outer_comb_paths;  /* Slightly outset from outer_boundaries */
 	ClipperLib::Paths solid_infill_clip;
-	ClipperLib::Paths infill_boundaries;
+	ClipperLib::Paths solid_infill_boundaries;
 	ClipperLib::Paths exposed_surface;
 	ClipperLib::Paths iron_paths;        /* Paths to follow for top surface ironing */
 	struct cint_rect box;  /* bounding box */
@@ -1310,8 +1310,6 @@ static void generate_insets(struct slice *slice)
 
 		done:
 		do_offset(island.insets[0], island.boundaries, config.extrusion_width / 8.0, 0.0);
-		if (config.connect_solid_infill)
-			do_offset(island.infill_insets, island.infill_boundaries, config.extrusion_width / 8.0, 0.0);
 		if (config.solid_infill_clip_offset > 0.0)
 			do_offset(island.infill_insets, island.solid_infill_clip, config.solid_infill_clip_offset, 0.0);
 		else
@@ -1447,10 +1445,12 @@ static void generate_infill_for_box(ClipperLib::Paths &p, const struct cint_rect
 
 #define BOUNDING_BOX_INTERSECTS(a, b) (!((b).x0 > (a).x1 || (b).x1 < (a).x0 || (b).y0 < (a).y1 || (b).y1 > (a).y0))
 
+#define SOLID_INFILL_BOUNDARY_OFFSET (config.extrusion_width / 8.0)
 static void generate_infill(struct object *o, ssize_t slice_index)
 {
 	for (struct island &island : o->slices[slice_index].islands) {
 		ClipperLib::Clipper c;
+		ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);  /* for building island.solid_infill_boundaries */
 		ClipperLib::PolyTree s;
 		ClipperLib::Paths s_tmp;
 		ClipperLib::Paths solid_infill_pattern, sparse_infill_pattern;
@@ -1497,16 +1497,23 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			if (config.fill_threshold > 0.0) {
 				remove_overlap(island.infill_insets, s_tmp, config.fill_threshold);
 				c.AddPaths(s_tmp, ClipperLib::ptClip, true);
+				co.AddPaths(s_tmp, config.outset_join_type, ClipperLib::etClosedPolygon);
 			}
-			else
+			else {
 				c.AddPaths(island.infill_insets, ClipperLib::ptClip, true);
+				co.AddPaths(island.infill_insets, config.outset_join_type, ClipperLib::etClosedPolygon);
+			}
 			generate_infill_for_box(solid_infill_pattern, island.box, 1.0, config.solid_infill_angle, FILL_PATTERN_RECTILINEAR, slice_index);
 			c.AddPaths(solid_infill_pattern, ClipperLib::ptSubject, false);
-			if (config.fill_inset_gaps)
-				for (int i = 0; i < config.shells - 1; ++i)
+			if (config.fill_inset_gaps) {
+				for (int i = 0; i < config.shells - 1; ++i) {
 					c.AddPaths(island.inset_gaps[i], ClipperLib::ptClip, true);
+					co.AddPaths(island.inset_gaps[i], config.outset_join_type, ClipperLib::etClosedPolygon);
+				}
+			}
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
+			co.Execute(island.solid_infill_boundaries, FL_T_TO_CINT(SOLID_INFILL_BOUNDARY_OFFSET));
 		}
 		else if (!config.no_solid && (config.floor_layers > 0 || config.roof_layers > 0)) {
 			c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
@@ -1537,12 +1544,17 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			generate_infill_for_box(solid_infill_pattern, island.box, 1.0, config.solid_infill_angle, FILL_PATTERN_RECTILINEAR, slice_index);
 			c.AddPaths(solid_infill_pattern, ClipperLib::ptSubject, false);
 			c.AddPaths(s_tmp, ClipperLib::ptClip, true);
-			if (config.fill_inset_gaps)
-				for (int i = 0; i < config.shells - 1; ++i)
+			co.AddPaths(s_tmp, config.outset_join_type, ClipperLib::etClosedPolygon);
+			if (config.fill_inset_gaps) {
+				for (int i = 0; i < config.shells - 1; ++i) {
 					c.AddPaths(island.inset_gaps[i], ClipperLib::ptClip, true);
+					co.AddPaths(island.inset_gaps[i], config.outset_join_type, ClipperLib::etClosedPolygon);
+				}
+			}
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			c.Clear();
 			ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
+			co.Execute(island.solid_infill_boundaries, FL_T_TO_CINT(SOLID_INFILL_BOUNDARY_OFFSET));
 
 			if (config.infill_density > 0.0) {
 				c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
@@ -1575,10 +1587,13 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				c.Clear();
 				generate_infill_for_box(solid_infill_pattern, island.box, 1.0, config.solid_infill_angle, FILL_PATTERN_RECTILINEAR, slice_index);
 				c.AddPaths(solid_infill_pattern, ClipperLib::ptSubject, false);
-				for (int i = 0; i < config.shells - 1; ++i)
+				for (int i = 0; i < config.shells - 1; ++i) {
 					c.AddPaths(island.inset_gaps[i], ClipperLib::ptClip, true);
+					co.AddPaths(island.inset_gaps[i], config.outset_join_type, ClipperLib::etClosedPolygon);
+				}
 				c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 				ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
+				co.Execute(island.solid_infill_boundaries, FL_T_TO_CINT(SOLID_INFILL_BOUNDARY_OFFSET));
 			}
 		}
 		if (config.min_sparse_infill_len > 0.0) {
@@ -2120,47 +2135,25 @@ static size_t find_nearest_aligned_path(const ClipperLib::Paths &p, ClipperLib::
 	return best;
 }
 
-#define FIND_NEAREST_SEGMENT_USE_LINE 1
 static size_t find_nearest_segment(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, bool *r_flip)
 {
-	bool flip = false;
 	size_t best = 0;
 	fl_t best_dist = FL_T_INF;
 	const ClipperLib::IntPoint p0(x, y);
 	for (size_t i = 0; i < p.size(); ++i) {
 		if (p[i].size() > 2)
 			fprintf(stderr, "error: bug in clipper: line segment has more than two points!\n");
-		#if FIND_NEAREST_SEGMENT_USE_LINE
-			const fl_t dist = distance_to_line(p0, p[i][0], p[i][1]);
-			if (dist < best_dist) {
-				best_dist = dist;
-				best = i;
-			}
-		#else
-			const fl_t dist0 = distance_to_point(p0, p[i][0]);
-			const fl_t dist1 = distance_to_point(p0, p[i][1]);
-			if (dist0 < best_dist) {
-				best_dist = dist0;
-				best = i;
-				flip = false;
-			}
-			else if (dist1 < best_dist) {
-				best_dist = dist1;
-				best = i;
-				flip = true;
-			}
-		#endif
+		const fl_t dist = distance_to_line(p0, p[i][0], p[i][1]);
+		if (dist < best_dist) {
+			best_dist = dist;
+			best = i;
+		}
 	}
-	#if FIND_NEAREST_SEGMENT_USE_LINE
-		const fl_t d0 = distance_to_point(p0, p[best][0]);
-		const fl_t d1 = distance_to_point(p0, p[best][1]);
-		flip = (d0 > d1) ? true : false;
-		if (r_dist)
-			*r_dist = ((flip) ? d1 : d0) / config.scale_constant;
-	#else
-		if (r_dist)
-			*r_dist = best_dist / config.scale_constant;
-	#endif
+	const fl_t dist0 = distance_to_point(p0, p[best][0]);
+	const fl_t dist1 = distance_to_point(p0, p[best][1]);
+	const bool flip = dist0 > dist1;
+	if (r_dist)
+		*r_dist = ((flip) ? dist1 : dist0) / config.scale_constant;
 	if (r_flip)
 		*r_flip = flip;
 	return best;
@@ -2588,21 +2581,21 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 		const fl_t x1 = CINT_TO_FL_T(p[1].X), y1 = CINT_TO_FL_T(p[1].Y);
 		const fl_t len = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
 		if (len > min_len) {
-			bool crosses_boundary = false;
+			bool cross_bound = false;
 			if (!first) {
 				const ClipperLib::IntPoint p0(m->x, m->y);
 				for (const struct island &island : slice->islands) {
 					for (const ClipperLib::Path &bound : island.outer_boundaries) {
 						if (get_boundary_crossing(bound, last_line[0], last_line[1]) >= 0 || get_boundary_crossing(bound, p0, (flip_points) ? p[1] : p[0]) >= 0) {
-							crosses_boundary = true;
+							cross_bound = true;
 							m->force_retract = true;
 							break;
 						}
 					}
 				}
 			}
-			bool connect = (!first && !crosses_boundary && best_dist < connect_threshold);
-			if (!first && crosses_boundary)
+			bool connect = (!first && !cross_bound && best_dist < connect_threshold);
+			if (!first && cross_bound)
 				do_support_wipe(slice, last_line, m, z);
 			if (flip_points)
 				std::swap(p[0], p[1]);
@@ -2688,7 +2681,7 @@ static void plan_insets(struct slice *slice, struct island *island, struct machi
 		m->force_retract = true;
 }
 
-static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, fl_t flow_adjust, ClipperLib::cInt z)
+static void plan_infill_simple(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, fl_t flow_adjust, ClipperLib::cInt z)
 {
 	while (!lines.empty()) {
 		bool flip_points;
@@ -2702,11 +2695,51 @@ static void plan_infill(ClipperLib::Paths &lines, struct slice *slice, struct is
 	}
 }
 
+static size_t find_next_solid_infill_segment(const ClipperLib::Paths &p, ClipperLib::Path &line0, fl_t *r_dist, bool *r_flip, bool *r_is_adjacent)
+{
+	const fl_t p_dist_fudge = config.extrusion_width / 8.0;
+	bool best_flip = false, best_is_adjacent = false;
+	size_t best = 0;
+	fl_t best_dist = FL_T_INF, best_adj_dist = FL_T_INF;
+
+	for (size_t i = 0; i < p.size(); ++i) {
+		if (p[i].size() > 2)
+			fprintf(stderr, "error: bug in clipper: line segment has more than two points!\n");
+		ClipperLib::Path line1 = p[i];
+		const fl_t dist = distance_to_line(line0[1], line1[0], line1[1]);
+		const fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
+		const fl_t dist0 = distance_to_point(line0[1], line1[0]);
+		const fl_t dist1 = distance_to_point(line0[1], line1[1]);
+		const bool is_adjacent = p_dist < config.extrusion_width + p_dist_fudge && p_dist > config.extrusion_width - p_dist_fudge;
+		if (dist0 > dist1)
+			std::swap(line1[0], line1[1]);
+		const bool is_opposite_dir = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[1].Y));
+		fl_t adj_dist = dist;
+		if (!is_opposite_dir)
+			adj_dist *= 2.0;
+		if (!is_adjacent)
+			adj_dist *= 2.0;
+		if (adj_dist < best_adj_dist) {
+			best_adj_dist = adj_dist;
+			best_flip = (is_adjacent && !is_opposite_dir) || (dist0 > dist1);
+			best_dist = (best_flip) ? dist1 : dist0;
+			best_is_adjacent = is_adjacent;
+			best = i;
+		}
+	}
+	if (r_dist)
+		*r_dist = best_dist / config.scale_constant;
+	if (r_flip)
+		*r_flip = best_flip;
+	if (r_is_adjacent)
+		*r_is_adjacent = best_is_adjacent;
+	return best;
+}
+
 static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, ClipperLib::cInt z)
 {
 	if (lines.empty())
 		return;
-	const fl_t p_dist_fudge = config.extrusion_width / 8.0;
 	bool flip_points, last_was_smoothed = false;
 	size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
 	ClipperLib::Path line0 = lines[best];
@@ -2715,31 +2748,41 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 		std::swap(line0[0], line0[1]);
 	while (!lines.empty()) {
 		fl_t best_dist;
-		best = find_nearest_segment(lines, line0[1].X, line0[1].Y, &best_dist, &flip_points);
+		bool is_adjacent;
+		best = find_next_solid_infill_segment(lines, line0, &best_dist, &flip_points, &is_adjacent);
 		ClipperLib::Path line1 = lines[best];
 		lines.erase(lines.begin() + best);
 		if (flip_points)
 			std::swap(line1[0], line1[1]);
-		bool crosses_boundary = false;
-		for (const ClipperLib::Path &bound : island->infill_boundaries) {
-			if (get_boundary_crossing(bound, line0[1], line1[0]) >= 0) {
-				crosses_boundary = true;
-				m->force_retract = true;
-				break;
-			}
+		bool cross_bound = false;
+		for (const ClipperLib::Path &bound : island->solid_infill_boundaries) {
+			   if (get_boundary_crossing(bound, line0[1], line1[0]) >= 0) {
+					   cross_bound = true;
+					   break;
+			   }
 		}
+		const ClipperLib::IntPoint line0_midpoint((line0[0].X + line0[1].X) / 2, (line0[0].Y + line0[1].Y) / 2);
+		const ClipperLib::IntPoint line1_midpoint((line1[0].X + line1[1].X) / 2, (line1[0].Y + line1[1].Y) / 2);
+		const fl_t len_line0 = distance_to_point(line0[0], line0[1]);
+		const fl_t len_line1 = distance_to_point(line1[0], line1[1]);
+		const fl_t len_mid = distance_to_point(line0_midpoint, line1_midpoint);
+		const fl_t xv0 = line0[1].X - line0[0].X, yv0 = line0[1].Y - line0[0].Y;
+		const fl_t xv1 = line1[1].X - line1[0].X, yv1 = line1[1].Y - line1[0].Y;
+		const fl_t xv_mid = line1_midpoint.X - line0_midpoint.X, yv_mid = line1_midpoint.Y - line0_midpoint.Y;
+		/* det(a, b) / (||a|| * ||b||) * ||a|| gives the width of the region covered by a (measured perpendicular to b) */
+		const fl_t region_width0 = fabs((xv0 * yv_mid - yv0 * xv_mid) / len_mid);
+		const fl_t region_width1 = fabs((xv1 * yv_mid - yv1 * xv_mid) / len_mid);
 		const fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
-		const fl_t len_line0 = distance_to_point(line0[0], line0[1]) / config.scale_constant;
-		const fl_t len_line1 = distance_to_point(line1[0], line1[1]) / config.scale_constant;
-		if (!crosses_boundary
-				&& p_dist < config.extrusion_width + p_dist_fudge && p_dist > config.extrusion_width - p_dist_fudge
-				&& best_dist < config.extrusion_width * 2.0
-				&& len_line0 <= config.extrusion_width * config.infill_smooth_threshold
-				&& len_line1 <= config.extrusion_width * config.infill_smooth_threshold) {
-			const ClipperLib::IntPoint line0_midpoint((line0[0].X + line0[1].X) / 2, (line0[0].Y + line0[1].Y) / 2);
-			const ClipperLib::IntPoint line1_midpoint((line1[0].X + line1[1].X) / 2, (line1[0].Y + line1[1].Y) / 2);
-			const fl_t extrude_dist = distance_to_point(line0_midpoint, line1_midpoint) / config.scale_constant;
-			const fl_t extrude_ratio = (len_line0 + len_line1) / 2.0 / extrude_dist;
+		const fl_t shortening_dist = best_dist / p_dist * (config.extrusion_width - config.extrusion_width * config.connected_infill_overlap * 2.0) / 2.0;
+		const bool is_opposite_dir = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[1].Y));
+		if (config.infill_smooth_threshold > 0.0
+				&& !cross_bound
+				&& is_adjacent
+				&& len_line0 <= config.extrusion_width * config.infill_smooth_threshold * 2.0 * config.scale_constant
+				&& len_line1 <= config.extrusion_width * config.infill_smooth_threshold * 2.0 * config.scale_constant
+				&& region_width0 <= config.extrusion_width * config.infill_smooth_threshold * config.scale_constant
+				&& region_width1 <= config.extrusion_width * config.infill_smooth_threshold * config.scale_constant) {
+			const fl_t extrude_ratio = (len_line0 + len_line1) / 2.0 / distance_to_point(line0_midpoint, line1_midpoint);
 			if (!last_was_smoothed) {
 				/* move to line0 start */
 				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
@@ -2750,10 +2793,32 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 			linear_move(slice, island, m, line1_midpoint.X, line1_midpoint.Y, z, 0.0, feed_rate / extrude_ratio, extrude_ratio, true, false, true);
 			last_was_smoothed = true;
 		}
+		else if (config.connect_solid_infill
+				&& !cross_bound
+				&& is_adjacent
+				&& is_opposite_dir
+				&& best_dist < config.extrusion_width * 2.0
+				&& ((last_was_smoothed) ? len_line0 / 2.0 : len_line0) > shortening_dist * config.scale_constant
+				&& len_line1 > shortening_dist * config.scale_constant) {
+			/* shorten line0 */
+			line0[1].X -= llround(shortening_dist * config.scale_constant * (xv0 / len_line0));
+			line0[1].Y -= llround(shortening_dist * config.scale_constant * (yv0 / len_line0));
+			/* shorten line1 */
+			line1[0].X -= llround(shortening_dist * config.scale_constant * (-xv1 / len_line1));
+			line1[0].Y -= llround(shortening_dist * config.scale_constant * (-yv1 / len_line1));
+			if (last_was_smoothed)  /* machine is at line1_midpoint (now line0) from last cycle; we will extrude the last half of line0 */
+				last_was_smoothed = false;
+			else  /* normal extrusion: move to start of line0 */
+				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+			/* extrude line0 */
+			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+			/* extrude connection */
+			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, feed_rate, 1.0 - config.connected_infill_overlap * 2.0, true, false, true);
+		}
 		else {
 			if (last_was_smoothed)  /* machine is at line1_midpoint (now line0) from last cycle; we will extrude the last half of line0 */
 				last_was_smoothed = false;
-			else /* normal extrusion: move to start of line0 */
+			else  /* normal extrusion: move to start of line0 */
 				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
 			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
 		}
@@ -2761,73 +2826,8 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 	}
 	if (last_was_smoothed)  /* machine is at line1_midpoint (now line0) from last cycle; we will extrude the last half of line0 */
 		last_was_smoothed = false;
-	else /* normal extrusion: move to start of line0 */
+	else  /* normal extrusion: move to start of line0 */
 		linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-	linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
-}
-
-static void plan_connected_solid_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, ClipperLib::cInt z)
-{
-	if (lines.empty())
-		return;
-	const fl_t p_dist_fudge = config.extrusion_width / 8.0;
-	bool flip_points;
-	size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
-	ClipperLib::Path line0 = lines[best];
-	lines.erase(lines.begin() + best);
-	if (flip_points)
-		std::swap(line0[0], line0[1]);
-	linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-	while (!lines.empty()) {
-		fl_t best_dist;
-		best = find_nearest_segment(lines, line0[1].X, line0[1].Y, &best_dist, &flip_points);
-		ClipperLib::Path line1 = lines[best];
-		lines.erase(lines.begin() + best);
-		if (flip_points)
-			std::swap(line1[0], line1[1]);
-		bool crosses_boundary = false;
-		for (const ClipperLib::Path &bound : island->infill_boundaries) {
-			if (get_boundary_crossing(bound, line0[1], line1[0]) >= 0) {
-				crosses_boundary = true;
-				m->force_retract = true;
-				break;
-			}
-		}
-		const fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
-		const bool opposite_dirs = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[0].Y));
-		const fl_t shortening_dist = best_dist / p_dist * (config.extrusion_width - config.extrusion_width * config.connected_infill_overlap * 2.0) / 2.0;
-		if (!crosses_boundary
-				&& opposite_dirs
-				&& p_dist < config.extrusion_width + p_dist_fudge && p_dist > config.extrusion_width - p_dist_fudge
-				&& best_dist < config.extrusion_width * 2.0
-				&& distance_to_point(line0[0], line0[1]) / config.scale_constant > shortening_dist
-				&& distance_to_point(line1[0], line1[1]) / config.scale_constant > shortening_dist) {
-			/* shorten line0 */
-			fl_t xv = line0[1].X - line0[0].X;
-			fl_t yv = line0[1].Y - line0[0].Y;
-			fl_t norm = sqrt(xv * xv + yv * yv);
-			line0[1].X -= shortening_dist * config.scale_constant * (xv / norm);
-			line0[1].Y -= shortening_dist * config.scale_constant * (yv / norm);
-			/* shorten line1 */
-			xv = line1[0].X - line1[1].X;
-			yv = line1[0].Y - line1[1].Y;
-			norm = sqrt(xv * xv + yv * yv);
-			line1[0].X -= shortening_dist * config.scale_constant * (xv / norm);
-			line1[0].Y -= shortening_dist * config.scale_constant * (yv / norm);
-			/* extrude line0 */
-			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
-			/* extrude connection */
-			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, feed_rate, 1.0 - config.connected_infill_overlap * 2.0, true, false, true);
-		}
-		else {
-			/* extrude line0 */
-			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
-			/* travel to line1 start */
-			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
-		}
-		line0 = line1;
-	}
-	/* extrude last line */
 	linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
 }
 
@@ -2858,12 +2858,9 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		}
 		struct island &island = slice->islands[best];
 		plan_insets(slice, &island, m, z, config.outside_first || layer_num == 0);
-		if (config.connect_solid_infill)
-			plan_connected_solid_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
-		else
-			plan_smoothed_solid_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
-		plan_infill(island.iron_paths, slice, &island, m, config.iron_feed_rate, config.iron_flow_multiplier, z);
-		plan_infill(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, 1.0, z);
+		plan_smoothed_solid_infill(island.solid_infill, slice, &island, m, config.solid_infill_feed_rate, z);
+		plan_infill_simple(island.iron_paths, slice, &island, m, config.iron_feed_rate, config.iron_flow_multiplier, z);
+		plan_infill_simple(island.sparse_infill, slice, &island, m, config.sparse_infill_feed_rate, 1.0, z);
 		delete[] island.insets;
 		delete[] island.inset_gaps;
 		if (config.comb) {
