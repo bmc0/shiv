@@ -2798,9 +2798,9 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 				&& !cross_bound
 				&& is_adjacent
 				&& is_opposite_dir
-				&& best_dist < config.extrusion_width * 2.0
+				&& best_dist < config.extrusion_width * 3.864
 				&& ((last_was_smoothed) ? len_line0 / 2.0 : len_line0) > shortening_dist * config.scale_constant
-				&& len_line1 > shortening_dist * config.scale_constant) {
+				&& len_line1 / 2.0 > shortening_dist * config.scale_constant) {
 			/* shorten line0 */
 			line0[1].X -= llround(shortening_dist * config.scale_constant * (xv0 / len_line0));
 			line0[1].Y -= llround(shortening_dist * config.scale_constant * (yv0 / len_line0));
