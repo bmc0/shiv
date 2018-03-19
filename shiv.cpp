@@ -2782,7 +2782,6 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 				&& len_line1 <= config.extrusion_width * config.infill_smooth_threshold * 2.0 * config.scale_constant
 				&& region_width0 <= config.extrusion_width * config.infill_smooth_threshold * config.scale_constant
 				&& region_width1 <= config.extrusion_width * config.infill_smooth_threshold * config.scale_constant) {
-			const fl_t extrude_ratio = (len_line0 + len_line1) / 2.0 / distance_to_point(line0_midpoint, line1_midpoint);
 			if (!last_was_smoothed) {
 				/* move to line0 start */
 				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
@@ -2790,7 +2789,9 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 				linear_move(slice, island, m, line0_midpoint.X, line0_midpoint.Y, z, 0.0, feed_rate, 1.0, true, false, true);
 			}
 			/* extrude to line1_midpoint */
-			linear_move(slice, island, m, line1_midpoint.X, line1_midpoint.Y, z, 0.0, feed_rate / extrude_ratio, extrude_ratio, true, false, true);
+			const fl_t extrude_ratio = (len_line0 + len_line1) / 2.0 / distance_to_point(line0_midpoint, line1_midpoint);
+			const fl_t scaled_feed_rate = (feed_rate / extrude_ratio < config.travel_feed_rate) ? feed_rate / extrude_ratio : config.travel_feed_rate;
+			linear_move(slice, island, m, line1_midpoint.X, line1_midpoint.Y, z, 0.0, scaled_feed_rate, extrude_ratio, true, false, true);
 			last_was_smoothed = true;
 		}
 		else if (config.connect_solid_infill
