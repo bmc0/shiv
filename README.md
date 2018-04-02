@@ -137,7 +137,8 @@ Setting                    | Default value | Description
 `fill_threshold`           |        `0.25` | Infill and inset gap fill is removed when it would be narrower than `extrusion_width * fill_threshold`.
 `infill_smooth_threshold`  |         `2.0` | Solid infill lines are converted to a smooth curve when the region being filled is narrower than `extrusion_width * infill_smooth_threshold`.
 `min_sparse_infill_len`    |         `1.0` | Minimum length for sparse infill lines.
-`connected_infill_overlap` |        `0.15` | Extra overlap between connected solid infill and shells in units of `extrusion_width`. Set to a negative value to preserve extruded volume.
+`infill_overlap`           |        `0.15` | Overlap between infill and shells in units of `extrusion_width`.
+`connected_infill_overlap` |         `0.0` | Extra overlap between connected infill and shells in units of `extrusion_width`. A negative value preserves extruded volume while a positive value increases extruded volume.
 `iron_flow_multiplier`     |         `0.1` | Flow adjustment (relative to normal flow) for top surface ironing.
 `iron_density`             |         `2.0` | Density of passes for top surface ironing.
 `generate_support`         |       `false` | Generate support structure.

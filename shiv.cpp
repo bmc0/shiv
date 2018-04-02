@@ -194,7 +194,8 @@ static struct {
 	fl_t fill_threshold           = 0.25;       /* Infill and inset gap fill is removed when it would be narrower than 'extrusion_width' * 'fill_threshold' */
 	fl_t infill_smooth_threshold  = 2.0;        /* Solid infill lines are converted to a smooth curve when the region being filled is narrower than 'extrusion_width' * 'infill_smooth_threshold' */
 	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines */
-	fl_t connected_infill_overlap = 0.15;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Set to a negative value to preserve extruded volume. */
+	fl_t infill_overlap           = 0.15;       /* Overlap between infill and shells in units of 'extrusion_width' */
+	fl_t connected_infill_overlap = 0.0;        /* Extra overlap between connected infill and shells in units of 'extrusion_width'. A negative value preserves extruded volume while a positive value increases extruded volume. */
 	fl_t iron_flow_multiplier     = 0.1;        /* Flow adjustment (relative to normal flow) for top surface ironing */
 	fl_t iron_density             = 2.0;        /* Density of passes for top surface ironing */
 	bool generate_support         = false;      /* Generate support structure */
@@ -348,6 +349,7 @@ static const struct setting settings[] = {
 	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(infill_smooth_threshold,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       4.0      } }, true,  true),
 	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(infill_overlap,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
 	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { -0.5,      0.5      } }, true,  true),
 	SETTING(iron_flow_multiplier,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
 	SETTING(iron_density,              SETTING_TYPE_FL_T,           false, false, { .f = { 1.0,       FL_T_INF } }, true,  false),
@@ -1232,7 +1234,7 @@ static void generate_outlines(struct slice *slice, ssize_t slice_index)
 	co.AddPaths(outlines, config.inset_join_type, ClipperLib::etClosedPolygon);
 	if (1.0 - config.edge_overlap > 0.0) {
 		ClipperLib::Paths tmp;
-		fl_t extra = config.extrusion_width * (1.0 - config.edge_overlap) / -2.0;
+		fl_t extra = -config.extrusion_width * (1.0 - config.edge_overlap) / 2.0;
 		co.Execute(tmp, FL_T_TO_CINT(config.edge_offset + config.extra_offset + extra));
 		co.Clear();
 		co.AddPaths(tmp, config.outset_join_type, ClipperLib::etClosedPolygon);
@@ -1299,7 +1301,7 @@ static void generate_insets(struct slice *slice)
 				if (island.insets[i].size() == 0)  /* break if nothing is being generated */
 					goto done;
 			}
-			do_offset(island.insets[config.shells - 1], island.infill_insets, -config.extrusion_width / 2.0, 0.0);
+			do_offset(island.insets[config.shells - 1], island.infill_insets, (0.5 - config.infill_overlap) * -config.extrusion_width, 0.0);
 			if (SIMPLIFY_EPSILON > 0.0)
 				simplify_paths(island.infill_insets, SIMPLIFY_EPSILON);
 		}
@@ -1332,13 +1334,13 @@ static void generate_insets(struct slice *slice)
 				ClipperLib::ReversePaths(hole);
 				co.AddPaths(hole, config.inset_join_type, ClipperLib::etClosedPolygon);
 				if (config.fill_threshold > 0.0) {
-					co.Execute(island.inset_gaps[i], FL_T_TO_CINT((config.extrusion_width + config.extrusion_width * config.fill_threshold) / -2.0));
+					co.Execute(island.inset_gaps[i], FL_T_TO_CINT((0.5 + config.fill_threshold / 2.0) * -config.extrusion_width));
 					co.Clear();
 					co.AddPaths(island.inset_gaps[i], config.outset_join_type, ClipperLib::etClosedPolygon);
-					co.Execute(island.inset_gaps[i], FL_T_TO_CINT(config.extrusion_width * config.fill_threshold / 2.0));
+					co.Execute(island.inset_gaps[i], FL_T_TO_CINT((config.infill_overlap + config.fill_threshold / 2.0) * config.extrusion_width));
 				}
 				else {
-					co.Execute(island.inset_gaps[i], FL_T_TO_CINT(-config.extrusion_width / 2.0));
+					co.Execute(island.inset_gaps[i], FL_T_TO_CINT((0.5 - config.infill_overlap) * -config.extrusion_width));
 				}
 				co.Clear();
 			}
