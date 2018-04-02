@@ -194,7 +194,7 @@ static struct {
 	fl_t fill_threshold           = 0.25;       /* Infill and inset gap fill is removed when it would be narrower than 'extrusion_width' * 'fill_threshold' */
 	fl_t infill_smooth_threshold  = 2.0;        /* Solid infill lines are converted to a smooth curve when the region being filled is narrower than 'extrusion_width' * 'infill_smooth_threshold' */
 	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines */
-	fl_t connected_infill_overlap = 0.15;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Extruded volume does not change. */
+	fl_t connected_infill_overlap = 0.15;       /* Extra overlap between connected solid infill and shells in units of 'extrusion_width'. Set to a negative value to preserve extruded volume. */
 	fl_t iron_flow_multiplier     = 0.1;        /* Flow adjustment (relative to normal flow) for top surface ironing */
 	fl_t iron_density             = 2.0;        /* Density of passes for top surface ironing */
 	bool generate_support         = false;      /* Generate support structure */
@@ -348,7 +348,7 @@ static const struct setting settings[] = {
 	SETTING(fill_threshold,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(infill_smooth_threshold,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       4.0      } }, true,  true),
 	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
-	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
+	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { -0.5,      0.5      } }, true,  true),
 	SETTING(iron_flow_multiplier,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
 	SETTING(iron_density,              SETTING_TYPE_FL_T,           false, false, { .f = { 1.0,       FL_T_INF } }, true,  false),
 	SETTING(generate_support,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
@@ -2778,8 +2778,9 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 		const fl_t region_width0 = fabs((xv0 * yv_mid - yv0 * xv_mid) / len_mid);
 		const fl_t region_width1 = fabs((xv1 * yv_mid - yv1 * xv_mid) / len_mid);
 		const fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
-		const fl_t shortening_dist = best_dist / p_dist * (config.extrusion_width - config.extrusion_width * config.connected_infill_overlap * 2.0) / 2.0;
+		const fl_t shortening_dist = best_dist / p_dist * (config.extrusion_width - config.extrusion_width * fabs(config.connected_infill_overlap) * 2.0) / 2.0;
 		const bool is_opposite_dir = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[1].Y));
+		const fl_t connect_min_len = MAXIMUM(shortening_dist, config.extrusion_width / 2.0) * config.scale_constant;
 		if (config.infill_smooth_threshold > 0.0
 				&& !cross_bound
 				&& is_adjacent
@@ -2804,8 +2805,8 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 				&& is_adjacent
 				&& is_opposite_dir
 				&& best_dist < config.extrusion_width * 3.864
-				&& ((last_was_smoothed) ? len_line0 / 2.0 : len_line0) > shortening_dist * config.scale_constant
-				&& len_line1 / 2.0 > shortening_dist * config.scale_constant) {
+				&& ((last_was_smoothed) ? len_line0 / 2.0 : len_line0) > connect_min_len
+				&& len_line1 / 2.0 > connect_min_len) {
 			/* shorten line0 */
 			line0[1].X -= llround(shortening_dist * config.scale_constant * (xv0 / len_line0));
 			line0[1].Y -= llround(shortening_dist * config.scale_constant * (yv0 / len_line0));
@@ -2819,7 +2820,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 			/* extrude line0 */
 			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
 			/* extrude connection */
-			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, feed_rate, 1.0 - config.connected_infill_overlap * 2.0, true, false, true);
+			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, feed_rate, (config.connected_infill_overlap < 0.0) ? 1.0 + config.connected_infill_overlap * 2.0 : 1.0, true, false, true);
 		}
 		else {
 			if (last_was_smoothed)  /* machine is at line1_midpoint (now line0) from last cycle; we will extrude the last half of line0 */
