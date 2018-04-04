@@ -163,7 +163,7 @@ static struct {
 	fl_t retract_min_travel       = 5.0;        /* Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if retract_within_island is false. */
 	fl_t retract_threshold        = 30.0;       /* Unconditional retraction threshold */
 	bool retract_within_island    = false;
-	bool retract_after_shells     = true;       /* Retract unconditionally after printing the last shell */
+	bool retract_after_shells     = false;      /* Retract unconditionally after printing the last shell */
 	bool moving_retract           = false;      /* Do a non-stationary retraction at the end of each shell */
 	fl_t extra_restart_len        = 0.0;        /* Extra material length on restart */
 	int cool_layer                = 2;          /* Turn on part cooling at this layer */
@@ -207,7 +207,7 @@ static struct {
 	fl_t support_margin           = 0.6;        /* Horizontal spacing between support and model, in units of edge_width */
 	int support_vert_margin       = 1;          /* Vertical spacing between support and model, in layers */
 	int interface_roof_layers     = 3;          /* Number of support interface layers when looking upwards */
-	int interface_floor_layers    = 2;          /* Number of support interface layers when looking downwards */
+	int interface_floor_layers    = 0;          /* Number of support interface layers when looking downwards */
 	fl_t support_xy_expansion     = 2.0;        /* Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger. */
 	fl_t support_density          = 0.2;        /* Support structure density */
 	fl_t interface_density        = 0.7;        /* Support interface density */

@@ -105,7 +105,7 @@ Setting                    | Default value | Description
 `retract_min_travel`       |         `5.0` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
 `retract_threshold`        |        `30.0` | Unconditional retraction threshold.
 `retract_within_island`    |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
-`retract_after_shells`     |        `true` | Retract unconditionally after printing the last shell.
+`retract_after_shells`     |       `false` | Retract unconditionally after printing the last shell.
 `moving_retract`           |       `false` | Do a non-stationary retraction at the end of each shell.
 `extra_restart_len`        |         `0.0` | Extra material length on restart.
 `cool_layer`               |           `2` | Turn on part cooling at this layer (numbered from zero). Set to `-1` to disable cooling.
@@ -149,7 +149,7 @@ Setting                    | Default value | Description
 `support_margin`           |         `0.6` | Horizontal spacing between support and model, in units of `edge_width`.
 `support_vert_margin`      |           `1` | Vertical spacing between support and model, in layers.
 `interface_roof_layers`    |           `3` | Number of support interface layers when looking upwards.
-`interface_floor_layers`   |           `2` | Number of support interface layers when looking downwards.
+`interface_floor_layers`   |           `0` | Number of support interface layers when looking downwards.
 `support_xy_expansion`     |         `2.0` | Expand support map by this amount. Larger values will generate more support material, but the supports will be stronger.
 `support_density`          |         `0.2` | Support structure density.
 `interface_density`        |         `0.7` | Support interface density.
