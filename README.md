@@ -124,7 +124,6 @@ Setting                    | Default value | Description
 `anchor`                   |       `false` | Clip and anchor inset paths.
 `outside_first`            |       `false` | Prefer exterior shells.
 `connect_solid_infill`     |       `false` | Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines.
-`solid_infill_first`       |        `true` | Print solid infill before sparse infill. Both infill types will be planned together if this is false. Will be set to `true` automatically if `solid_infill_feed_rate` and `sparse_infill_feed_rate` are not equal or if `connect_solid_infill` is true.
 `iron_top_surface`         |       `false` | Run the nozzle over exposed top surfaces a second time.
 `separate_z_travel`        |       `false` | Generate a separate z travel move instead of moving all axes together.
 `preserve_layer_offset`    |       `false` | Preserve layer offset when placing the object on the build plate. Useful for certain multi-part prints.
