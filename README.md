@@ -123,7 +123,7 @@ Setting                    | Default value | Description
 `no_solid`                 |       `false` | If true, only generate solid fill on the very top and bottom of the model.
 `anchor`                   |       `false` | Clip and anchor inset paths.
 `outside_first`            |       `false` | Prefer exterior shells.
-`connect_solid_infill`     |       `false` | Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines.
+`connect_solid_infill`     |        `true` | Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines.
 `iron_top_surface`         |       `false` | Run the nozzle over exposed top surfaces a second time.
 `separate_z_travel`        |       `false` | Generate a separate z travel move instead of moving all axes together.
 `preserve_layer_offset`    |       `false` | Preserve layer offset when placing the object on the build plate. Useful for certain multi-part prints.
