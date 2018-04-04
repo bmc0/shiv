@@ -2747,7 +2747,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 {
 	if (lines.empty())
 		return;
-	bool flip_points, last_was_smoothed = false;
+	bool flip_points, last_was_smoothed = false, needs_travel = true;
 	size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
 	ClipperLib::Path line0 = lines[best];
 	lines.erase(lines.begin() + best);
@@ -2792,7 +2792,8 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 				&& region_width1 <= config.extrusion_width * config.infill_smooth_threshold * config.scale_constant) {
 			if (!last_was_smoothed) {
 				/* move to line0 start */
-				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
+				if (needs_travel)
+					linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
 				/* extrude to line0_midpoint */
 				linear_move(slice, island, m, line0_midpoint.X, line0_midpoint.Y, z, 0.0, feed_rate, 1.0, true, false, true);
 			}
@@ -2801,6 +2802,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 			const fl_t scaled_feed_rate = (feed_rate / extrude_ratio < config.travel_feed_rate) ? feed_rate / extrude_ratio : config.travel_feed_rate;
 			linear_move(slice, island, m, line1_midpoint.X, line1_midpoint.Y, z, 0.0, scaled_feed_rate, extrude_ratio, true, false, true);
 			last_was_smoothed = true;
+			needs_travel = false;
 		}
 		else if (config.connect_solid_infill
 				&& !cross_bound
@@ -2809,33 +2811,32 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 				&& best_dist < config.extrusion_width * 3.864
 				&& ((last_was_smoothed) ? len_line0 / 2.0 : len_line0) > connect_min_len
 				&& len_line1 / 2.0 > connect_min_len) {
-			/* shorten line0 */
-			line0[1].X -= llround(shortening_dist * config.scale_constant * (xv0 / len_line0));
-			line0[1].Y -= llround(shortening_dist * config.scale_constant * (yv0 / len_line0));
-			/* shorten line1 */
-			line1[0].X -= llround(shortening_dist * config.scale_constant * (-xv1 / len_line1));
-			line1[0].Y -= llround(shortening_dist * config.scale_constant * (-yv1 / len_line1));
-			if (last_was_smoothed)  /* machine is at line1_midpoint (now line0) from last cycle; we will extrude the last half of line0 */
-				last_was_smoothed = false;
-			else  /* normal extrusion: move to start of line0 */
+			ClipperLib::IntPoint pt0, pt1;
+			/* adjusted line0 end point */
+			pt0.X = line0[1].X - llround(shortening_dist * config.scale_constant * (xv0 / len_line0));
+			pt0.Y = line0[1].Y - llround(shortening_dist * config.scale_constant * (yv0 / len_line0));
+			/* adjusted line1 start point */
+			pt1.X = line1[0].X - llround(shortening_dist * config.scale_constant * (-xv1 / len_line1));
+			pt1.Y = line1[0].Y - llround(shortening_dist * config.scale_constant * (-yv1 / len_line1));
+			if (needs_travel)
 				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
 			/* extrude line0 */
-			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+			linear_move(slice, island, m, pt0.X, pt0.Y, z, 0.0, feed_rate, 1.0, true, false, true);
 			/* extrude connection */
-			linear_move(slice, island, m, line1[0].X, line1[0].Y, z, 0.0, feed_rate, (config.connected_infill_overlap < 0.0) ? 1.0 + config.connected_infill_overlap * 2.0 : 1.0, true, false, true);
+			linear_move(slice, island, m, pt1.X, pt1.Y, z, 0.0, feed_rate, (config.connected_infill_overlap < 0.0) ? 1.0 + config.connected_infill_overlap * 2.0 : 1.0, true, false, true);
+			last_was_smoothed = false;
+			needs_travel = false;
 		}
 		else {
-			if (last_was_smoothed)  /* machine is at line1_midpoint (now line0) from last cycle; we will extrude the last half of line0 */
-				last_was_smoothed = false;
-			else  /* normal extrusion: move to start of line0 */
+			if (needs_travel)
 				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
 			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
+			last_was_smoothed = false;
+			needs_travel = true;
 		}
 		line0 = line1;
 	}
-	if (last_was_smoothed)  /* machine is at line1_midpoint (now line0) from last cycle; we will extrude the last half of line0 */
-		last_was_smoothed = false;
-	else  /* normal extrusion: move to start of line0 */
+	if (needs_travel)
 		linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, true);
 	linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, true);
 }
