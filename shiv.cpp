@@ -1099,6 +1099,98 @@ static void simplify_paths(ClipperLib::Paths &paths, const fl_t epsilon)
 		simplify_path(p, epsilon);
 }
 
+/* 0 is colinear, 1 is counter-clockwise and -1 is clockwise */
+static int triplet_orientation(const ClipperLib::IntPoint &a, const ClipperLib::IntPoint &b, const ClipperLib::IntPoint &c)
+{
+	const ClipperLib::cInt v = (b.X - a.X) * (c.Y - a.Y) - (c.X - a.X) * (b.Y - a.Y);  /* Calculate signed area * 2 */
+	return (v == 0) ? 0 : (v > 0) ? 1 : -1;
+}
+
+/* Looks for the nearest line segment and then returns the nearest endpoint on that segment. */
+static size_t find_nearest_segment_endpoint_on_closed_path(const ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
+{
+	size_t best = 0;
+	fl_t best_dist = FL_T_INF;
+	const ClipperLib::IntPoint p0(x, y);
+	for (size_t i = 0, i2 = 1; i < p.size(); ++i) {
+		i2 = (i2 == p.size()) ? 0 : i2;
+		const fl_t dist = distance_to_line(p0, p[i], p[i2]);
+		if (dist < best_dist) {
+			best_dist = dist;
+			best = (distance_to_point(p0, p[i]) < distance_to_point(p0, p[i2])) ? i : i2;
+		}
+		++i2;
+	}
+	if (r_dist)
+		*r_dist = distance_to_point(p0, p[best]) / config.scale_constant;
+	return best;
+}
+
+static size_t find_nearest_path(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, size_t *r_start)
+{
+	size_t best = 0, start = 0;
+	fl_t best_dist = FL_T_INF;
+	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	for (size_t i = 0; i < p.size(); ++i) {
+		for (size_t k = 0; k < p[i].size(); ++k) {
+			fl_t x1 = CINT_TO_FL_T(p[i][k].X), y1 = CINT_TO_FL_T(p[i][k].Y);
+			fl_t dist = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+			if (dist < best_dist) {
+				best_dist = dist;
+				best = i;
+				start = k;
+			}
+		}
+	}
+	if (r_dist)
+		*r_dist = sqrt(best_dist);
+	if (r_start)
+		*r_start = start;
+	return best;
+}
+
+static size_t find_nearest_aligned_path(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
+{
+	size_t best = 0;
+	fl_t best_dist = FL_T_INF;
+	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
+	for (size_t i = 0; i < p.size(); ++i) {
+		fl_t x1 = CINT_TO_FL_T(p[i][0].X), y1 = CINT_TO_FL_T(p[i][0].Y);
+		fl_t dist = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+		if (dist < best_dist) {
+			best_dist = dist;
+			best = i;
+		}
+	}
+	if (r_dist)
+		*r_dist = sqrt(best_dist);
+	return best;
+}
+
+static size_t find_nearest_segment(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, bool *r_flip)
+{
+	size_t best = 0;
+	fl_t best_dist = FL_T_INF;
+	const ClipperLib::IntPoint p0(x, y);
+	for (size_t i = 0; i < p.size(); ++i) {
+		if (p[i].size() > 2)
+			fprintf(stderr, "error: bug in clipper: line segment has more than two points!\n");
+		const fl_t dist = distance_to_line(p0, p[i][0], p[i][1]);
+		if (dist < best_dist) {
+			best_dist = dist;
+			best = i;
+		}
+	}
+	const fl_t dist0 = distance_to_point(p0, p[best][0]);
+	const fl_t dist1 = distance_to_point(p0, p[best][1]);
+	const bool flip = dist0 > dist1;
+	if (r_dist)
+		*r_dist = ((flip) ? dist1 : dist0) / config.scale_constant;
+	if (r_flip)
+		*r_flip = flip;
+	return best;
+}
+
 static void generate_outlines(struct slice *slice, ssize_t slice_index)
 {
 	struct segment_list iseg = { NULL, NULL }, oseg = { NULL, NULL };
@@ -1345,17 +1437,54 @@ static void generate_insets(struct slice *slice)
 				co.Clear();
 			}
 		}
-		if (config.align_seams) {
-			for (int i = 0; i < ((config.align_interior_seams) ? config.shells : 1); ++i) {
-				for (ClipperLib::Path &p : island.insets[i]) {
-					if (p.size() >= 3) {
-						fl_t lowest = FL_T_INF;
+		if (config.align_seams && config.shells > 0) {
+			for (ClipperLib::Path &p : island.insets[0]) {
+				fl_t lowest = FL_T_INF, highest = -FL_T_INF;
+				for (auto it = p.begin(); it != p.end(); ++it) {
+					fl_t v = (*it).X + (*it).Y;
+					if (v < lowest)  lowest = v;
+					if (v > highest) highest = v;
+				}
+				fl_t lowest_score = FL_T_INF;
+				const int concave_orientation = (ClipperLib::Orientation(p)) ? -1 : 1;
+				ClipperLib::IntPoint p0 = *(p.end() - 1), p1 = *p.begin(), p2 = *(p.begin() + 1);
+				auto best = p.begin();
+				for (auto it = best; it != p.end(); ) {
+					const fl_t dx0 = p1.X - p0.X, dy0 = p1.Y - p0.Y;
+					const fl_t dx1 = p2.X - p1.X, dy1 = p2.Y - p1.Y;
+					const fl_t len0 = sqrt(dx0 * dx0 + dy0 * dy0), len1 = sqrt(dx1 * dx1 + dy1 * dy1);
+					const fl_t cos_theta = std::max(std::min(-((dx0 * dx1 + dy0 * dy1) / (len0 * len1)), 0.999999), -0.999999);  /* 1 is a reversal; -1 is a straight junction */
+					const fl_t sin_theta_2 = sqrt(0.5 * (1.0 - cos_theta));
+					const fl_t cos_theta_2 = sqrt(0.5 * (1.0 + cos_theta));
+					const fl_t r = 0.5 * config.extrusion_width * sin_theta_2 / (1.0 - sin_theta_2);
+					const fl_t r_lim = 0.5 * std::min(len0, len1) * sin_theta_2 / cos_theta_2;
+					const fl_t v = p1.X + p1.Y;
+					bool is_concave = triplet_orientation(p0, p1, p2) == concave_orientation;
+					fl_t score = (log(std::min(r, r_lim) + 1.0) + 1.0) * ((is_concave) ? 1.0 : 1.3) * ((v - lowest) / (highest - lowest) + 1.0);
+					if (score < lowest_score) {
+						best = it;
+						lowest_score = score;
+					}
+					++it;
+					p0 = *(it - 1);
+					p1 = *it;
+					p2 = (it + 1 == p.end()) ? *p.begin() : *(it + 1);
+				}
+				/* printf("lowest_score=%f\n", lowest_score); */
+				std::rotate(p.begin(), best, p.end());
+			}
+			if (config.align_interior_seams) {
+				for (int i = 1; i < config.shells; ++i) {
+					for (ClipperLib::Path &p : island.insets[i]) {
+						const size_t align_path_idx = (island.insets[0].size() > 1) ? find_nearest_path(island.insets[0], p[0].X, p[0].Y, NULL, NULL) : 0;
+						ClipperLib::IntPoint align_point = island.insets[0][align_path_idx][0];
+						fl_t best_dist = FL_T_INF;
 						auto best = p.begin();
 						for (auto it = best; it != p.end(); ++it) {
-							fl_t v = (*it).X + (*it).Y;
-							if (v < lowest) {
+							const fl_t v = distance_to_point(*it, align_point);
+							if (v < best_dist) {
 								best = it;
-								lowest = v;
+								best_dist = v;
 							}
 						}
 						std::rotate(p.begin(), best, p.end());
@@ -2003,13 +2132,6 @@ static void preview_slices(const struct object *o)
 	}
 }
 
-/* 0 is colinear, 1 is counter-clockwise and -1 is clockwise */
-static int triplet_orientation(const ClipperLib::IntPoint &a, const ClipperLib::IntPoint &b, const ClipperLib::IntPoint &c)
-{
-	const ClipperLib::cInt v = (b.X - a.X) * (c.Y - a.Y) - (c.X - a.X) * (b.Y - a.Y);  /* Calculate signed area * 2 */
-	return (v == 0) ? 0 : (v > 0) ? 1 : -1;
-}
-
 static int is_on_segment(const ClipperLib::IntPoint &a, const ClipperLib::IntPoint &b, const ClipperLib::IntPoint &c)
 {
 	if (b.X <= MAXIMUM(a.X, c.X) && b.X >= MINIMUM(a.X, c.X) && b.Y <= MAXIMUM(a.Y, c.Y) && b.Y >= MINIMUM(a.Y, c.Y))
@@ -2074,91 +2196,6 @@ static bool crosses_exposed_surface(const struct machine *m, const struct island
 		}
 	}
 	return in_outer;
-}
-
-/* Looks for the nearest line segment and then returns the nearest endpoint on that segment. */
-static size_t find_nearest_segment_endpoint_on_closed_path(const ClipperLib::Path &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
-{
-	size_t best = 0;
-	fl_t best_dist = FL_T_INF;
-	const ClipperLib::IntPoint p0(x, y);
-	for (size_t i = 0, i2 = 1; i < p.size(); ++i) {
-		i2 = (i2 == p.size()) ? 0 : i2;
-		const fl_t dist = distance_to_line(p0, p[i], p[i2]);
-		if (dist < best_dist) {
-			best_dist = dist;
-			best = (distance_to_point(p0, p[i]) < distance_to_point(p0, p[i2])) ? i : i2;
-		}
-		++i2;
-	}
-	if (r_dist)
-		*r_dist = distance_to_point(p0, p[best]) / config.scale_constant;
-	return best;
-}
-
-static size_t find_nearest_path(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, size_t *r_start)
-{
-	size_t best = 0, start = 0;
-	fl_t best_dist = FL_T_INF;
-	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
-	for (size_t i = 0; i < p.size(); ++i) {
-		for (size_t k = 0; k < p[i].size(); ++k) {
-			fl_t x1 = CINT_TO_FL_T(p[i][k].X), y1 = CINT_TO_FL_T(p[i][k].Y);
-			fl_t dist = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
-			if (dist < best_dist) {
-				best_dist = dist;
-				best = i;
-				start = k;
-			}
-		}
-	}
-	if (r_dist)
-		*r_dist = sqrt(best_dist);
-	if (r_start)
-		*r_start = start;
-	return best;
-}
-
-static size_t find_nearest_aligned_path(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist)
-{
-	size_t best = 0;
-	fl_t best_dist = FL_T_INF;
-	const fl_t x0 = CINT_TO_FL_T(x), y0 = CINT_TO_FL_T(y);
-	for (size_t i = 0; i < p.size(); ++i) {
-		fl_t x1 = CINT_TO_FL_T(p[i][0].X), y1 = CINT_TO_FL_T(p[i][0].Y);
-		fl_t dist = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
-		if (dist < best_dist) {
-			best_dist = dist;
-			best = i;
-		}
-	}
-	if (r_dist)
-		*r_dist = sqrt(best_dist);
-	return best;
-}
-
-static size_t find_nearest_segment(const ClipperLib::Paths &p, ClipperLib::cInt x, ClipperLib::cInt y, fl_t *r_dist, bool *r_flip)
-{
-	size_t best = 0;
-	fl_t best_dist = FL_T_INF;
-	const ClipperLib::IntPoint p0(x, y);
-	for (size_t i = 0; i < p.size(); ++i) {
-		if (p[i].size() > 2)
-			fprintf(stderr, "error: bug in clipper: line segment has more than two points!\n");
-		const fl_t dist = distance_to_line(p0, p[i][0], p[i][1]);
-		if (dist < best_dist) {
-			best_dist = dist;
-			best = i;
-		}
-	}
-	const fl_t dist0 = distance_to_point(p0, p[best][0]);
-	const fl_t dist1 = distance_to_point(p0, p[best][1]);
-	const bool flip = dist0 > dist1;
-	if (r_dist)
-		*r_dist = ((flip) ? dist1 : dist0) / config.scale_constant;
-	if (r_flip)
-		*r_flip = flip;
-	return best;
 }
 
 static void append_g_move(struct slice *slice, const struct g_move &move, fl_t len)
