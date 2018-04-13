@@ -1382,6 +1382,8 @@ static void do_offset_square(ClipperLib::Paths &src, ClipperLib::Paths &dest, fl
 		co.Execute(dest, FL_T_TO_CINT(dist));
 }
 
+#define BOUND_OFFSET (config.extrusion_width / 8.0)
+#define BOUND_SIMPLIFY_EPSILON (BOUND_OFFSET / 2.0 * config.scale_constant)
 static void generate_insets(struct slice *slice)
 {
 	for (struct island &island : slice->islands) {
@@ -1403,16 +1405,20 @@ static void generate_insets(struct slice *slice)
 		}
 
 		done:
-		do_offset(island.insets[0], island.boundaries, config.extrusion_width / 8.0, 0.0);
+		do_offset(island.insets[0], island.boundaries, BOUND_OFFSET, 0.0);
+		simplify_paths(island.boundaries, BOUND_SIMPLIFY_EPSILON);
 		if (config.solid_infill_clip_offset > 0.0)
 			do_offset(island.infill_insets, island.solid_infill_clip, config.solid_infill_clip_offset, 0.0);
 		else
 			island.solid_infill_clip = island.infill_insets;
-		if (config.comb || config.generate_support)
+		if (config.comb || config.generate_support) {
 			do_offset(island.insets[0], island.outer_boundaries, 0.5 * config.edge_width - config.edge_offset, 0.0);
+			simplify_paths(island.outer_boundaries, BOUND_SIMPLIFY_EPSILON);
+		}
 		if (config.comb) {
 			island.comb_paths = island.insets[0];
-			do_offset(island.outer_boundaries, island.outer_comb_paths, config.extrusion_width / 8.0, 0.0);
+			do_offset(island.outer_boundaries, island.outer_comb_paths, BOUND_OFFSET, 0.0);
+			simplify_paths(island.outer_comb_paths, BOUND_SIMPLIFY_EPSILON);
 		}
 		if (config.shells > 1 && config.fill_inset_gaps) {
 			ClipperLib::ClipperOffset co(config.offset_miter_limit, config.offset_arc_tolerance);
@@ -1644,7 +1650,8 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			}
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
-			co.Execute(island.solid_infill_boundaries, FL_T_TO_CINT(SOLID_INFILL_BOUNDARY_OFFSET));
+			co.Execute(island.solid_infill_boundaries, FL_T_TO_CINT(BOUND_OFFSET));
+			simplify_paths(island.solid_infill_boundaries, BOUND_SIMPLIFY_EPSILON);
 		}
 		else if (!config.no_solid && (config.floor_layers > 0 || config.roof_layers > 0)) {
 			c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
@@ -1685,7 +1692,8 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 			c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 			c.Clear();
 			ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
-			co.Execute(island.solid_infill_boundaries, FL_T_TO_CINT(SOLID_INFILL_BOUNDARY_OFFSET));
+			co.Execute(island.solid_infill_boundaries, FL_T_TO_CINT(BOUND_OFFSET));
+			simplify_paths(island.solid_infill_boundaries, BOUND_SIMPLIFY_EPSILON);
 
 			if (config.infill_density > 0.0) {
 				c.AddPaths(island.infill_insets, ClipperLib::ptSubject, true);
@@ -1724,7 +1732,8 @@ static void generate_infill(struct object *o, ssize_t slice_index)
 				}
 				c.Execute(ClipperLib::ctIntersection, s, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
 				ClipperLib::OpenPathsFromPolyTree(s, island.solid_infill);
-				co.Execute(island.solid_infill_boundaries, FL_T_TO_CINT(SOLID_INFILL_BOUNDARY_OFFSET));
+				co.Execute(island.solid_infill_boundaries, FL_T_TO_CINT(BOUND_OFFSET));
+				simplify_paths(island.solid_infill_boundaries, BOUND_SIMPLIFY_EPSILON);
 			}
 		}
 		if (config.min_sparse_infill_len > 0.0) {
@@ -1765,6 +1774,7 @@ static void generate_support_boundaries(struct slice *slice)
 	for (const struct island &island : slice->islands)
 		co.AddPaths(island.insets[0], config.outset_join_type, ClipperLib::etClosedPolygon);
 	co.Execute(slice->support_boundaries, FL_T_TO_CINT((0.5 + config.support_margin) * config.edge_width - config.edge_offset));
+	simplify_paths(slice->support_boundaries, BOUND_SIMPLIFY_EPSILON);
 }
 
 static void extend_support_downward(struct object *o, const ClipperLib::PolyNode *n, ssize_t slice_index)
