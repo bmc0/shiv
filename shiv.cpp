@@ -1915,6 +1915,8 @@ static void generate_brim(struct object *o)
 			ClipperLib::SimplifyPolygons(tmp, ClipperLib::pftNonZero);
 		}
 		do_offset_square(tmp, tmp, config.extrusion_width * i + (config.edge_offset * -2.0 - config.extrusion_width) * (1.0 - config.brim_adhesion_factor) * 2.0, 1.0);
+		if (SIMPLIFY_EPSILON > 0.0)
+			simplify_paths(tmp, SIMPLIFY_EPSILON);
 		o->brim.push_back(tmp);
 	}
 }
