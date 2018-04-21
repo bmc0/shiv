@@ -3251,7 +3251,7 @@ int main(int argc, char *argv[])
 		}
 	}
 #ifdef _OPENMP
-	fprintf(stderr, "OpenMP enabled\n");
+	fprintf(stderr, "OpenMP enabled (%d threads)\n", omp_get_max_threads());
 #endif
 
 	fprintf(stderr, "load object...\n");
