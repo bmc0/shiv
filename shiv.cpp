@@ -124,7 +124,7 @@ static struct {
 	fl_t x_center                 = 0.0;
 	fl_t y_center                 = 0.0;
 	fl_t packing_density          = 0.75;       /* Controls how tightly packed the extrusions are. 0 means just touching and 1 means fully packed. */
-	fl_t edge_packing_density     = 0.5;        /* Controls how much extra negative offset is applied to the outer perimeter to compensate for reduced packing density of its constrained edge. Should be set to 1 when outside_first is true. */
+	fl_t edge_packing_density     = 0.5;        /* Controls how much extra negative offset is applied to the outer perimeter to compensate for reduced packing density of its constrained edge. Automatically set to 1 when outside_first is true or shells is less than 2. */
 	fl_t shell_clip               = 0.15;       /* Length to clip off the ends of shells in units of extrusion_width */
 	fl_t extra_offset             = 0.0;        /* Offset the object by this distance in the xy plane */
 	fl_t edge_offset;                           /* Offset of the outer perimeter (calculated) */
@@ -3207,6 +3207,8 @@ int main(int argc, char *argv[])
 
 	config.roof_layers = lround(config.roof_thickness / config.layer_height);
 	config.floor_layers = lround(config.floor_thickness / config.layer_height);
+	if (config.outside_first || config.shells < 2)
+		config.edge_packing_density = 1.0;
 	config.extrusion_area = config.extrusion_width * config.layer_height - (config.layer_height * config.layer_height - config.layer_height * config.layer_height * M_PI_4) * (1.0 - config.packing_density);
 	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI_4)) / config.layer_height + config.layer_height;
 	config.edge_offset = (config.edge_width + (config.edge_width - config.extrusion_width) * (1.0 - config.edge_packing_density)) / -2.0;

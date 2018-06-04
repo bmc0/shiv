@@ -72,7 +72,7 @@ Setting                    | Default value | Description
 `x_center`                 |         `0.0` | X coordinate to center the object on.
 `y_center`                 |         `0.0` | Y coordinate to center the object on.
 `packing_density`          |        `0.75` | Controls how tightly packed the extrusions are. 0 means just touching and 1 means fully packed.
-`edge_packing_density`     |         `0.5` | Controls how much extra negative offset is applied to the outer perimeter to compensate for reduced packing density of its constrained edge. Should be set to 1 when `outside_first` is true.
+`edge_packing_density`     |         `0.5` | Controls how much extra negative offset is applied to the outer perimeter to compensate for reduced packing density of its constrained edge. Automatically set to 1 when `outside_first` is true or `shells` is less than 2.
 `shell_clip`               |        `0.15` | Length to clip off the ends of shells in units of `extrusion_width`.
 `extra_offset`             |         `0.0` | Offset the object by this distance in the xy plane.
 `infill_density`           |         `0.2` | Sparse infill density.
