@@ -436,6 +436,7 @@ struct island {
 	ClipperLib::Paths solid_infill_clip;
 	ClipperLib::Paths solid_infill_boundaries;
 	ClipperLib::Paths exposed_surface;
+	ClipperLib::Paths constraining_edge; /* Slightly inset from infill_insets. Used to determine whether infill lines should be connected. */
 	ClipperLib::Paths iron_paths;        /* Paths to follow for top surface ironing */
 	struct cint_rect box;  /* bounding box */
 };
@@ -1351,6 +1352,8 @@ static void generate_insets(struct slice *slice)
 				co.Clear();
 			}
 		}
+		if (config.connect_solid_infill)
+			do_offset(island.infill_insets, island.constraining_edge, -BOUND_OFFSET, 0.0);
 		if (config.align_seams) {
 			for (int i = 0; i < ((config.align_interior_seams) ? config.shells : 1); ++i) {
 				for (ClipperLib::Path &p : island.insets[i]) {
@@ -1453,7 +1456,6 @@ static void generate_infill_for_box(ClipperLib::Paths &p, const struct cint_rect
 
 #define BOUNDING_BOX_INTERSECTS(a, b) (!((b).x0 > (a).x1 || (b).x1 < (a).x0 || (b).y0 < (a).y1 || (b).y1 > (a).y0))
 
-#define SOLID_INFILL_BOUNDARY_OFFSET (config.extrusion_width / 8.0)
 static void generate_infill(struct object *o, ssize_t slice_index)
 {
 	for (struct island &island : o->slices[slice_index].islands) {
@@ -2780,6 +2782,16 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 					   break;
 			   }
 		}
+		bool is_constrained = false;
+		for (const ClipperLib::Path &bound : island->constraining_edge) {
+			/* Note: is_constrained will always be true for inset gap fill */
+			bool in_bound = ClipperLib::PointInPolygon(line0[1], bound) || ClipperLib::PointInPolygon(line1[0], bound);
+			bool bound_is_hole = !ClipperLib::Orientation(bound);
+			if (in_bound == bound_is_hole) {
+				is_constrained = true;
+				break;
+			}
+		}
 		const ClipperLib::IntPoint line0_midpoint((line0[0].X + line0[1].X) / 2, (line0[0].Y + line0[1].Y) / 2);
 		const ClipperLib::IntPoint line1_midpoint((line1[0].X + line1[1].X) / 2, (line1[0].Y + line1[1].Y) / 2);
 		const fl_t len_line0 = distance_to_point(line0[0], line0[1]);
@@ -2818,6 +2830,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 		}
 		else if (config.connect_solid_infill
 				&& !cross_bound
+				&& !is_constrained
 				&& is_adjacent
 				&& is_opposite_dir
 				&& best_dist < config.extrusion_width * 3.864
