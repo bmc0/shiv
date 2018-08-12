@@ -181,7 +181,6 @@ static struct {
 	bool no_solid                 = false;      /* If true, only generate solid fill on the very top and bottom of the model */
 	bool anchor                   = false;      /* Clip and anchor inset paths */
 	bool outside_first            = false;      /* Prefer exterior shells */
-	bool connect_solid_infill     = true;       /* Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines */
 	bool iron_top_surface         = false;      /* Run the nozzle over exposed top surfaces a second time */
 	bool separate_z_travel        = false;      /* Generate a separate z travel move instead of moving all axes together */
 	bool preserve_layer_offset    = false;      /* Preserve layer offset when placing the object on the build plate. Useful for certain multi-part prints. */
@@ -195,7 +194,6 @@ static struct {
 	fl_t infill_smooth_threshold  = 2.0;        /* Solid infill lines are converted to a smooth curve when the region being filled is narrower than 'extrusion_width' * 'infill_smooth_threshold' */
 	fl_t min_sparse_infill_len    = 1.0;        /* Minimum length for sparse infill lines */
 	fl_t infill_overlap           = 0.05;       /* Overlap between infill and shells in units of 'extrusion_width' */
-	fl_t connected_infill_overlap = 0.0;        /* Extra overlap between connected infill and shells in units of 'extrusion_width'. A negative value preserves extruded volume while a positive value increases extruded volume. */
 	fl_t iron_flow_multiplier     = 0.1;        /* Flow adjustment (relative to normal flow) for top surface ironing */
 	fl_t iron_density             = 2.0;        /* Density of passes for top surface ironing */
 	bool generate_support         = false;      /* Generate support structure */
@@ -336,7 +334,6 @@ static const struct setting settings[] = {
 	SETTING(no_solid,                  SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(anchor,                    SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(outside_first,             SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(connect_solid_infill,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(iron_top_surface,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(separate_z_travel,         SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(preserve_layer_offset,     SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
@@ -350,7 +347,6 @@ static const struct setting settings[] = {
 	SETTING(infill_smooth_threshold,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       4.0      } }, true,  true),
 	SETTING(min_sparse_infill_len,     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(infill_overlap,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       0.5      } }, true,  true),
-	SETTING(connected_infill_overlap,  SETTING_TYPE_FL_T,           false, false, { .f = { -0.5,      0.5      } }, true,  true),
 	SETTING(iron_flow_multiplier,      SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
 	SETTING(iron_density,              SETTING_TYPE_FL_T,           false, false, { .f = { 1.0,       FL_T_INF } }, true,  false),
 	SETTING(generate_support,          SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
@@ -1352,8 +1348,7 @@ static void generate_insets(struct slice *slice)
 				co.Clear();
 			}
 		}
-		if (config.connect_solid_infill)
-			do_offset(island.infill_insets, island.constraining_edge, -BOUND_OFFSET, 0.0);
+		do_offset(island.infill_insets, island.constraining_edge, -BOUND_OFFSET, 0.0);
 		if (config.align_seams) {
 			for (int i = 0; i < ((config.align_interior_seams) ? config.shells : 1); ++i) {
 				for (ClipperLib::Path &p : island.insets[i]) {
@@ -2804,7 +2799,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 		const fl_t region_width0 = fabs((xv0 * yv_mid - yv0 * xv_mid) / len_mid);
 		const fl_t region_width1 = fabs((xv1 * yv_mid - yv1 * xv_mid) / len_mid);
 		const fl_t p_dist = perpendicular_distance_to_line(line0[1], line1[0], line1[1]) / config.scale_constant;
-		const fl_t shortening_dist = best_dist / p_dist * (config.extrusion_width - config.extrusion_width * fabs(config.connected_infill_overlap) * 2.0) / 2.0;
+		const fl_t shortening_dist = best_dist / p_dist * config.extrusion_width / 2.0;
 		const bool is_opposite_dir = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[1].Y));
 		const fl_t connect_min_len = MAXIMUM(shortening_dist, config.extrusion_width / 2.0) * config.scale_constant;
 		if (config.infill_smooth_threshold > 0.0
@@ -2828,8 +2823,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 			last_was_smoothed = true;
 			needs_travel = false;
 		}
-		else if (config.connect_solid_infill
-				&& !cross_bound
+		else if (!cross_bound
 				&& !is_constrained
 				&& is_adjacent
 				&& is_opposite_dir
@@ -2848,7 +2842,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 			/* extrude line0 */
 			linear_move(slice, island, m, pt0.X, pt0.Y, z, 0.0, feed_rate, 1.0, true, false, true);
 			/* extrude connection */
-			linear_move(slice, island, m, pt1.X, pt1.Y, z, 0.0, feed_rate, (config.connected_infill_overlap < 0.0) ? 1.0 + config.connected_infill_overlap * 2.0 : 1.0, true, false, true);
+			linear_move(slice, island, m, pt1.X, pt1.Y, z, 0.0, feed_rate, 1.0, true, false, true);
 			last_was_smoothed = false;
 			needs_travel = false;
 		}

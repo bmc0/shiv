@@ -123,7 +123,6 @@ Setting                    | Default value | Description
 `no_solid`                 |       `false` | If true, only generate solid fill on the very top and bottom of the model.
 `anchor`                   |       `false` | Clip and anchor inset paths.
 `outside_first`            |       `false` | Prefer exterior shells.
-`connect_solid_infill`     |        `true` | Connect the ends of solid infill lines together, forming a zig-zag instead of individual lines.
 `iron_top_surface`         |       `false` | Run the nozzle over exposed top surfaces a second time.
 `separate_z_travel`        |       `false` | Generate a separate z travel move instead of moving all axes together.
 `preserve_layer_offset`    |       `false` | Preserve layer offset when placing the object on the build plate. Useful for certain multi-part prints.
@@ -137,7 +136,6 @@ Setting                    | Default value | Description
 `infill_smooth_threshold`  |         `2.0` | Solid infill lines are converted to a smooth curve when the region being filled is narrower than `extrusion_width * infill_smooth_threshold`.
 `min_sparse_infill_len`    |         `1.0` | Minimum length for sparse infill lines.
 `infill_overlap`           |        `0.05` | Overlap between infill and shells in units of `extrusion_width`.
-`connected_infill_overlap` |         `0.0` | Extra overlap between connected infill and shells in units of `extrusion_width`. A negative value preserves extruded volume while a positive value increases extruded volume.
 `iron_flow_multiplier`     |         `0.1` | Flow adjustment (relative to normal flow) for top surface ironing.
 `iron_density`             |         `2.0` | Density of passes for top surface ironing.
 `generate_support`         |       `false` | Generate support structure.
