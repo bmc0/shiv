@@ -3066,7 +3066,7 @@ static int write_gcode(const char *path, struct object *o)
 
 int main(int argc, char *argv[])
 {
-	int opt;
+	int opt, ret;
 	char *path, *output_path = NULL;
 	struct object o;
 	fl_t scale_factor = 1.0, x_translate = 0.0, y_translate = 0.0, z_chop = 0.0;
@@ -3233,8 +3233,9 @@ int main(int argc, char *argv[])
 
 	fprintf(stderr, "load object...\n");
 	memset(&o, 0, sizeof(o));
-	if (read_binary_stl(&o, path)) {
-		fprintf(stderr, "error: failed to read stl: %s: %s\n", path, strerror(errno));
+	ret = read_binary_stl(&o, path);
+	if (ret) {
+		fprintf(stderr, "error: failed to read stl: %s: %s\n", path, (ret == 2) ? "short read" : strerror(errno));
 		return 1;
 	}
 
