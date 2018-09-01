@@ -2067,10 +2067,10 @@ static ssize_t crosses_boundary(const struct machine *m, const ClipperLib::Paths
 	return -1;
 }
 
-static bool crosses_exposed_surface(const struct machine *m, const struct island *island, ClipperLib::cInt x, ClipperLib::cInt y)
+static bool crosses_exposed_surface(const struct island *island, ClipperLib::cInt x0, ClipperLib::cInt y0, ClipperLib::cInt x1, ClipperLib::cInt y1)
 {
-	const ClipperLib::IntPoint p0(m->x, m->y);
-	const ClipperLib::IntPoint p1(x, y);
+	const ClipperLib::IntPoint p0(x0, y0);
+	const ClipperLib::IntPoint p1(x1, y1);
 	bool in_outer = false;
 	for (const ClipperLib::Path &p : island->exposed_surface) {
 		if (get_boundary_crossing(p, p0, p1) >= 0)
@@ -2241,6 +2241,15 @@ static size_t find_best_travel_point(const ClipperLib::Paths &b, size_t b_idx, c
 	return r;
 }
 
+static void do_retract(struct slice *slice, struct machine *m)
+{
+	if (!m->is_retracted && config.retract_len > 0.0) {
+		struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false, false };
+		append_g_move(slice, retract_move, config.retract_len);
+		m->is_retracted = true;
+	}
+}
+
 static void append_linear_travel(struct slice *slice, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t feed_rate)
 {
 	if (x != m->x || y != m->y || z != m->z) {
@@ -2255,23 +2264,33 @@ static void append_linear_travel(struct slice *slice, struct machine *m, Clipper
 	}
 }
 
-/* FIXME: This should probably obey the retract threshold */
-static void combed_travel(struct slice *slice, struct machine *m, const ClipperLib::Paths &bounds, const ClipperLib::Paths &paths, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
+static fl_t append_comb_move(const struct machine *m, const struct island *island, ClipperLib::Path &comb_moves, const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1, bool *force_retract)
+{
+	if (!(*force_retract) && !m->is_retracted && island && crosses_exposed_surface(island, p0.X, p0.Y, p1.X, p1.Y))
+		*force_retract = true;
+	comb_moves.push_back(p1);
+	return distance_to_point(p0, p1) / config.scale_constant;
+}
+
+static void combed_travel(struct slice *slice, const struct island *island, struct machine *m, const ClipperLib::Paths &bounds, const ClipperLib::Paths &paths, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate, fl_t retract_threshold)
 {
 	if (x == m->x || y == m->y || paths.size() == 0)
 		return;
 	ClipperLib::Paths b = bounds;
 	ssize_t last_bound_idx = -1;
-	fl_t closest_dist = FL_T_INF;
+	fl_t closest_dist = FL_T_INF, comb_dist = 0.0;
+	ClipperLib::IntPoint p0(m->x, m->y), p1(x, y);
+	ClipperLib::Path comb_moves;
+	bool force_retract = false;
 
 	while (b.size() > 0) {
-		ClipperLib::IntPoint p0(m->x, m->y), p1(x, y);
 		ssize_t bound_idx = nearest_boundary_crossing_2pt(b, p0, p1);
 		if (bound_idx < 0)  /* No boundary crossings, so we can move directly there */
-			return;
+			break;
 		if (bound_idx == last_bound_idx) {
 			b.erase(b.begin() + bound_idx);
 			last_bound_idx = -1;
+			force_retract = true;
 			DEBUG("combed_travel(): warning: removed a boundary at z = %f\n", CINT_TO_FL_T(m->z));
 			continue;
 		}
@@ -2285,12 +2304,13 @@ static void combed_travel(struct slice *slice, struct machine *m, const ClipperL
 		if (distance_to_point(p[end_idx], p1) >= closest_dist) {
 			b.erase(b.begin() + bound_idx);
 			last_bound_idx = -1;
+			force_retract = true;
 			DEBUG("combed_travel(): warning: useless indirection at z = %f\n", CINT_TO_FL_T(m->z));
 			continue;
 		}
 		if (start_idx == end_idx) {
 			size_t path_pt_idx, path_idx = find_nearest_path(paths, p[end_idx].X, p[end_idx].Y, NULL, &path_pt_idx);
-			append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
+			comb_dist += append_comb_move(m, island, comb_moves, p0, paths[path_idx][path_pt_idx], &force_retract);
 			p0 = paths[path_idx][path_pt_idx];
 		}
 		else {
@@ -2306,7 +2326,7 @@ static void combed_travel(struct slice *slice, struct machine *m, const ClipperL
 			do {
 				i = find_best_travel_point(b, bound_idx, p0, i, end_idx, reverse);
 				size_t path_pt_idx, path_idx = find_nearest_path(paths, p[i].X, p[i].Y, NULL, &path_pt_idx);
-				append_linear_travel(slice, m, paths[path_idx][path_pt_idx].X, paths[path_idx][path_pt_idx].Y, m->z, feed_rate);
+				comb_dist += append_comb_move(m, island, comb_moves, p0, paths[path_idx][path_pt_idx], &force_retract);
 				p0 = paths[path_idx][path_pt_idx];
 				if (!crosses_boundary_2pt(p, p0, p1, NULL) && distance_to_point(p0, p1) < closest_dist)
 					break;  /* Progress was made and there are no more boundary crossings for current boundary */
@@ -2316,6 +2336,7 @@ static void combed_travel(struct slice *slice, struct machine *m, const ClipperL
 		if (dist >= closest_dist) {
 			b.erase(b.begin() + bound_idx);
 			last_bound_idx = -1;
+			force_retract = true;
 			DEBUG("combed_travel(): warning: ended up farther away at z = %f\n", CINT_TO_FL_T(m->z));
 		}
 		else {
@@ -2323,6 +2344,11 @@ static void combed_travel(struct slice *slice, struct machine *m, const ClipperL
 			last_bound_idx = bound_idx;
 		}
 	}
+	comb_dist += distance_to_point(p0, p1) / config.scale_constant;
+	if (force_retract || comb_dist >= retract_threshold)
+		do_retract(slice, m);
+	for (ClipperLib::IntPoint &pt : comb_moves)
+		append_linear_travel(slice, m, pt.X, pt.Y, m->z, feed_rate);
 }
 
 /* Move to the point nearest to the target location */
@@ -2330,7 +2356,7 @@ static void move_to_island_exit(struct slice *slice, struct machine *m, ClipperL
 {
 	size_t path_pt_idx, path_idx = find_nearest_path(slice->last_comb_paths, x, y, NULL, &path_pt_idx);
 	const ClipperLib::IntPoint &point = slice->last_comb_paths[path_idx][path_pt_idx];
-	combed_travel(slice, m, slice->last_boundaries, slice->last_comb_paths, point.X, point.Y, feed_rate);
+	combed_travel(slice, NULL, m, slice->last_boundaries, slice->last_comb_paths, point.X, point.Y, feed_rate, 0.0);
 	append_linear_travel(slice, m, point.X, point.Y, m->z, feed_rate);
 }
 
@@ -2341,37 +2367,34 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 	struct g_move move = { x, y, z, 0.0, feed_rate, scalable, is_travel, false };
 	const fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 	if (is_travel) {
-		if (!m->is_retracted && config.retract_len > 0.0
-			&& (m->force_retract
-				|| slice->last_boundaries.size() > 0
-				|| len > ((doing_infill) ? config.retract_threshold : config.retract_min_travel)
-				|| (config.retract_within_island && len > config.retract_min_travel)
-				|| (island && crosses_boundary(m, island->boundaries, x, y) >= 0)
-				|| (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(m, island, x, y))
-			)
-		) {
-			/* FIXME: This will cause a retract even if the path is modified to stay within the island */
-			struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false, false };
-			append_g_move(slice, retract_move, config.retract_len);
-			m->is_retracted = true;
-		}
+		fl_t retract_threshold = ((doing_infill && !config.retract_within_island) ? config.retract_threshold : config.retract_min_travel);
+		if (m->force_retract)
+			do_retract(slice, m);
 		if (z == m->z && config.comb) {
 			if (slice->last_boundaries.size() > 0) {
 				/* Inside an island and moving to a point outside of it */
+				do_retract(slice, m);
 				if (slice->last_comb_paths.size() > 0)
 					move_to_island_exit(slice, m, x, y, feed_rate);
 				slice->last_boundaries.clear();
 				slice->last_comb_paths.clear();
-				combed_travel(slice, m, slice->printed_outer_boundaries, slice->printed_outer_comb_paths, x, y, feed_rate);
+				combed_travel(slice, island, m, slice->printed_outer_boundaries, slice->printed_outer_comb_paths, x, y, feed_rate, retract_threshold);
 			}
 			else if (island) {
 				/* Moving within an island */
-				combed_travel(slice, m, island->boundaries, island->comb_paths, x, y, feed_rate);
+				combed_travel(slice, island, m, island->boundaries, island->comb_paths, x, y, feed_rate, retract_threshold);
 			}
 			else {
 				/* Moving between two points that are not in an island */
-				combed_travel(slice, m, slice->printed_outer_boundaries, slice->printed_outer_comb_paths, x, y, feed_rate);
+				combed_travel(slice, island, m, slice->printed_outer_boundaries, slice->printed_outer_comb_paths, x, y, feed_rate, retract_threshold);
 			}
+		}
+		else if (!m->is_retracted && config.retract_len > 0.0
+			&& (slice->last_boundaries.size() > 0
+				|| len > retract_threshold
+				|| (island && crosses_boundary(m, island->boundaries, x, y) >= 0)
+				|| (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(island, m->x, m->y, x, y)))) {
+			do_retract(slice, m);
 		}
 	}
 	else {
