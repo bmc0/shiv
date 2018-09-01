@@ -102,9 +102,7 @@ Setting                    | Default value | Description
 `retract_speed`            |        `20.0` | Retraction speed.
 `moving_retract_speed`     |        `-0.5` | Retrect speed when doing non-stationary retracts. A negative value means a multiple of `retract_speed`. 
 `restart_speed`            |        `-1.0` | Restart speed. A negative value means a multiple of `retract_speed`.
-`retract_min_travel`       |         `5.0` | Minimum travel for retraction when not crossing a boundary or when printing shells. Has no effect when printing infill if `retract_within_island` is false.
 `retract_threshold`        |        `30.0` | Unconditional retraction threshold.
-`retract_within_island`    |       `false` | If false, retraction will not occur unless a boundary is crossed or the travel distance is greater than `retract_threshold`.
 `retract_after_shells`     |       `false` | Retract unconditionally after printing the last shell.
 `moving_retract`           |       `false` | Do a non-stationary retraction at the end of each shell.
 `extra_restart_len`        |         `0.0` | Extra material length on restart.
