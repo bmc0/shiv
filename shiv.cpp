@@ -2351,10 +2351,12 @@ static void combed_travel(struct slice *slice, const struct island *island, stru
 /* Move to the point nearest to the target location */
 static void move_to_island_exit(struct slice *slice, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, fl_t feed_rate)
 {
-	size_t path_pt_idx, path_idx = find_nearest_path(slice->last_comb_paths, x, y, NULL, &path_pt_idx);
-	const ClipperLib::IntPoint &point = slice->last_comb_paths[path_idx][path_pt_idx];
-	combed_travel(slice, NULL, m, slice->last_boundaries, slice->last_comb_paths, point.X, point.Y, feed_rate, 0.0);
-	append_linear_travel(slice, m, point.X, point.Y, m->z, feed_rate);
+	if (nearest_boundary_crossing_2pt(slice->last_boundaries, ClipperLib::IntPoint(m->x, m->y), ClipperLib::IntPoint(x, y)) >= 0) {
+		size_t path_pt_idx, path_idx = find_nearest_path(slice->last_comb_paths, x, y, NULL, &path_pt_idx);
+		const ClipperLib::IntPoint &point = slice->last_comb_paths[path_idx][path_pt_idx];
+		combed_travel(slice, NULL, m, slice->last_boundaries, slice->last_comb_paths, point.X, point.Y, feed_rate, 0.0);
+		append_linear_travel(slice, m, point.X, point.Y, m->z, feed_rate);
+	}
 }
 
 static void linear_move(struct slice *slice, const struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel, fl_t retract_threshold)
