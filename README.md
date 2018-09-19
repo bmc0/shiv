@@ -28,7 +28,7 @@ OpenMP is enabled by default for both platforms.
 
 #### Synopsis:
 
-	shiv [-hp] [-o output_path] [-c config_path] [-S setting=value]
+	shiv [-hpP] [-o output_path] [-c config_path] [-S setting=value]
 	     [-l layer_height] [-w extrusion_width] [-t tolerance]
 	     [-s scale_factor] [-d infill_density] [-n shells]
 	     [-r roof_thickness] [-f floor_thickness] [-b brim_width]
@@ -41,6 +41,7 @@ Flag                 | Description
 ---------------------|-----------------------------------------
 `-h`                 | Show help text
 `-p`                 | Preview slices (pipe stdout to gnuplot)
+`-P`                 | Print configuration
 `-o output_path`     | Output gcode path
 `-c config_path`     | Configuration file path
 `-S setting=value`   | Set setting to value

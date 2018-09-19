@@ -65,7 +65,7 @@ typedef double fl_t;
 
 static const char e_nomem[] = "fatal: No memory\n";
 static const char usage_string[] =
-	"usage: shiv [-hp] [-o output_path] [-c config_path] [-S setting=value]\n"
+	"usage: shiv [-hpP] [-o output_path] [-c config_path] [-S setting=value]\n"
 	"            [-l layer_height] [-w extrusion_width] [-t tolerance]\n"
 	"            [-s scale_factor] [-d infill_density] [-n shells]\n"
 	"            [-r roof_thickness] [-f floor_thickness] [-b brim_width]\n"
@@ -75,6 +75,7 @@ static const char usage_string[] =
 	"flags:\n"
 	"  -h                    show this help\n"
 	"  -p                    preview slices (pipe stdout to gnuplot)\n"
+	"  -P                    print configuration\n"
 	"  -o output_path        output gcode path\n"
 	"  -c config_path        configuration file path\n"
 	"  -S setting=value      set setting to value\n"
@@ -3097,10 +3098,10 @@ int main(int argc, char *argv[])
 	char *path, *output_path = NULL;
 	struct object o;
 	fl_t scale_factor = 1.0, x_translate = 0.0, y_translate = 0.0, z_chop = 0.0;
-	bool do_preview = false;
+	bool do_preview = false, print_config = false;
 
 	/* Parse options */
-	while ((opt = getopt(argc, argv, ":hpo:c:O:S:l:w:t:s:d:n:r:f:b:C:x:y:z:")) != -1) {
+	while ((opt = getopt(argc, argv, ":hpPo:c:O:S:l:w:t:s:d:n:r:f:b:C:x:y:z:")) != -1) {
 		char *key, *value;
 		int ret;
 		switch (opt) {
@@ -3109,6 +3110,9 @@ int main(int argc, char *argv[])
 			return 0;
 		case 'p':
 			do_preview = true;
+			break;
+		case 'P':
+			print_config = true;
 			break;
 		case 'o':
 			output_path = optarg;
@@ -3190,17 +3194,6 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 	}
-	if (optind + 1 == argc)
-		path = argv[optind];
-	else if (optind + 1 < argc) {
-		fputs("error: only one input may be given\n", stderr);
-		return 1;
-	}
-	else {
-		fputs("error: expected path\n", stderr);
-		fputs(usage_string, stderr);
-		return 1;
-	}
 
 	if (config.layer_height > config.extrusion_width) {
 		fputs("error: layer_height must not be greater than extrusion_width\n", stderr);
@@ -3245,18 +3238,33 @@ int main(int argc, char *argv[])
 	config.moving_retract_speed = GET_FEED_RATE(config.moving_retract_speed, config.retract_speed);
 	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);
 
-	fprintf(stderr, "configuration:\n");
-	fprintf(stderr, "  %-24s = %f\n", "scale_factor (-s)", scale_factor);
-	for (size_t i = 0; i < LENGTH(settings); ++i) {
-		if (settings[i].type != SETTING_TYPE_STR) {
-			fprintf(stderr, " %c%-24s = ", (settings[i].read_only) ? '*' : ' ', settings[i].name);
-			print_config_setting(stderr, &settings[i], false);
-			putc('\n', stderr);
+	if (print_config) {
+		fprintf(stderr, "configuration:\n");
+		fprintf(stderr, "  %-24s = %f\n", "scale_factor (-s)", scale_factor);
+		for (size_t i = 0; i < LENGTH(settings); ++i) {
+			if (settings[i].type != SETTING_TYPE_STR) {
+				fprintf(stderr, " %c%-24s = ", (settings[i].read_only) ? '*' : ' ', settings[i].name);
+				print_config_setting(stderr, &settings[i], false);
+				putc('\n', stderr);
+			}
 		}
 	}
 #ifdef _OPENMP
 	fprintf(stderr, "OpenMP enabled (%d threads)\n", omp_get_max_threads());
 #endif
+
+	if (optind + 1 == argc)
+		path = argv[optind];
+	else if (optind + 1 < argc) {
+		fputs("error: only one input may be given\n", stderr);
+		return 1;
+	}
+	else {
+		fputs("error: expected path\n", stderr);
+		if (!print_config)
+			fputs(usage_string, stderr);
+		return 1;
+	}
 
 	fprintf(stderr, "load object...\n");
 	memset(&o, 0, sizeof(o));
