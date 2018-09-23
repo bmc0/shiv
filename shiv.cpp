@@ -138,7 +138,7 @@ static struct {
 	int roof_layers;                            /* Calculated from roof_thickness */
 	fl_t floor_thickness          = 0.8;        /* Solid surface thickness when looking downwards */
 	int floor_layers;                           /* Calculated from floor_thickness */
-	fl_t min_shell_contact        = 1.0;        /* Minimum contact patch through roof and floor layers in units of extrusion_width. Small values (~0.1 to 1.0) will reduce print time compared to larger values, but may produce weaker parts. */
+	fl_t min_shell_contact        = 0.0;        /* Minimum contact patch through roof and floor layers in units of extrusion_width. Small values will reduce print time compared to larger values, but may produce weaker parts. */
 	fl_t solid_infill_clip_offset;
 	fl_t solid_fill_expansion     = 1.0;        /* Distance to expand solid infill, in units of extrusion_width */
 	fl_t material_diameter        = 1.75;       /* Diameter of material */

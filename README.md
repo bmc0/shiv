@@ -83,7 +83,7 @@ Setting                    | Default value | Description
 `shells`                   |           `2` | Number of loops/perimeters/shells (whatever you want to call them).
 `roof_thickness`           |         `0.8` | Solid surface thickness when looking upwards.
 `floor_thickness`          |         `0.8` | Solid surface thickness when looking downwards.
-`min_shell_contact`        |         `1.0` | Minimum contact patch through roof and floor layers in units of `extrusion_width`. Small values (~0.1 to 1.0) will reduce print time compared to larger values, but may produce weaker parts.
+`min_shell_contact`        |         `0.0` | Minimum contact patch through roof and floor layers in units of `extrusion_width`. Small values will reduce print time compared to larger values, but may produce weaker parts.
 `solid_fill_expansion`     |         `1.0` | Distance to expand solid infill, in units of `extrusion_width`.
 `material_diameter`        |        `1.75` | Diameter of material.
 `flow_multiplier`          |         `1.0` | Flow rate adjustment to compensate for incorrect E-steps or E-step variation between material types.
