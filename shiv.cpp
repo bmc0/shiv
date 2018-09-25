@@ -165,6 +165,7 @@ static struct {
 	bool retract_after_shells     = false;      /* Retract unconditionally after printing the last shell */
 	bool moving_retract           = false;      /* Do a non-stationary retraction at the end of each shell */
 	fl_t extra_restart_len        = 0.0;        /* Extra material length on restart */
+	fl_t z_hop                    = 0.0;        /* Raise the z axis by this amount after retracting when traveling */
 	int cool_layer                = 2;          /* Turn on part cooling at this layer */
 	char *start_gcode             = NULL;
 	char *end_gcode               = NULL;
@@ -316,6 +317,7 @@ static const struct setting settings[] = {
 	SETTING(retract_after_shells,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(moving_retract,            SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(extra_restart_len,         SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(z_hop,                     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(cool_layer,                SETTING_TYPE_INT,            false, false, { .i = { -1,        INT_MAX  } }, true,  true),
 	SETTING(start_gcode,               SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(end_gcode,                 SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
@@ -464,7 +466,7 @@ struct slice {
 struct machine {
 	ClipperLib::cInt x, y, z;
 	fl_t e, feed_rate;
-	bool is_retracted, force_retract;
+	bool is_retracted, is_hopped, force_retract;
 };
 
 static void die(const char *s, int r)
@@ -2369,7 +2371,7 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 	if (is_travel) {
 		if (m->force_retract)
 			do_retract(slice, m);
-		if (z == m->z && config.comb) {
+		if (z == m->z && config.comb) {  /* NOTE: config.comb is false if z-hop is enabled */
 			if (slice->last_boundaries.size() > 0) {
 				/* Inside an island and moving to a point outside of it */
 				do_retract(slice, m);
@@ -2395,9 +2397,20 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 				|| (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(island, m->x, m->y, x, y)))) {
 			do_retract(slice, m);
 		}
+		if (z == m->z && m->is_retracted && !m->is_hopped && config.z_hop > 0.0) {
+			move.z += FL_T_TO_CINT(config.z_hop);
+			struct g_move hop_move = { m->x, m->y, move.z, 0.0, config.travel_feed_rate, false, true, false };
+			append_g_move(slice, hop_move, config.z_hop);
+			m->is_hopped = true;
+		}
 	}
 	else {
 		if (m->is_retracted && config.retract_len > 0.0) {
+			if (m->is_hopped) {
+				struct g_move unhop_move = { m->x, m->y, m->z, 0.0, config.travel_feed_rate, false, true, false };
+				append_g_move(slice, unhop_move, config.z_hop);
+				m->is_hopped = false;
+			}
 			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false, false, true };
 			if (config.extra_restart_len < 0.0)
 				restart_move.e += config.extra_restart_len;
@@ -2407,10 +2420,10 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 			m->is_retracted = false;
 		}
 		move.e = len * config.extrusion_area * config.flow_multiplier * flow_adjust / config.material_area;
-	}
-	if (extra_e_len != 0.0) {
-		struct g_move restart_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true, false, true };
-		append_g_move(slice, restart_move, fabs(extra_e_len));
+		if (extra_e_len != 0.0) {
+			struct g_move extra_e_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true, false, true };
+			append_g_move(slice, extra_e_move, fabs(extra_e_len));
+		}
 	}
 	if (x != m->x || y != m->y || z != m->z || move.e != 0.0) {
 		append_g_move(slice, move, len);
@@ -2563,9 +2576,11 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 		}
 	}
 	m->is_retracted = true;  /* Make sure we don't retract */
+	m->is_hopped = true;     /* Make sure we don't hop */
 	for (const ClipperLib::IntPoint &point : coast_path)
 		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true, 0.0);
 	m->is_retracted = false;
+	m->is_hopped = false;
 	if (config.moving_retract && config.retract_len > 0.0)
 		start_idx = moving_retract(p, slice, m, z, start_idx, feed_rate);
 	if (config.wipe_len > 0.0) {
@@ -2591,6 +2606,7 @@ static void do_support_wipe(struct slice *slice, ClipperLib::Path &last_line, st
 {
 	if (config.support_wipe_len > 0.0) {
 		m->force_retract = true;
+		m->is_hopped = true;  /* Make sure we don't hop */
 		const fl_t xv = last_line[1].X - last_line[0].X;
 		const fl_t yv = last_line[1].Y - last_line[0].Y;
 		const fl_t norm = sqrt(xv * xv + yv * yv);
@@ -2598,6 +2614,7 @@ static void do_support_wipe(struct slice *slice, ClipperLib::Path &last_line, st
 			linear_move(slice, NULL, m, last_line[1].X - config.support_wipe_len * config.scale_constant * (xv / norm), last_line[1].Y - config.support_wipe_len * config.scale_constant * (yv / norm), z, 0.0, config.travel_feed_rate, 1.0, false, true, 0.0);
 		else
 			linear_move(slice, NULL, m, last_line[0].X, last_line[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, 0.0);
+		m->is_hopped = false;
 	}
 }
 
@@ -2997,7 +3014,7 @@ static void write_gcode_move(FILE *f, const struct g_move *move, struct machine 
 	m->feed_rate = feed_rate;
 }
 
-#define NEW_PLAN_MACHINE(name, obj) struct machine name = { FL_T_TO_CINT(obj->c.x - (obj->w + config.xy_extra) / 2.0), FL_T_TO_CINT(obj->c.y - (obj->d + config.xy_extra) / 2.0), 0, 0.0, 0.0, true, false }
+#define NEW_PLAN_MACHINE(name, obj) struct machine name = { FL_T_TO_CINT(obj->c.x - (obj->w + config.xy_extra) / 2.0), FL_T_TO_CINT(obj->c.y - (obj->d + config.xy_extra) / 2.0), 0, 0.0, 0.0, true, false, false }
 
 static int write_gcode(const char *path, struct object *o)
 {
@@ -3208,6 +3225,8 @@ int main(int argc, char *argv[])
 	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI_4)) / config.layer_height + config.layer_height;
 	config.edge_offset = (config.edge_width + (config.edge_width - config.extrusion_width) * (1.0 - config.edge_packing_density)) / -2.0;
 	config.material_area = config.material_diameter * config.material_diameter * M_PI_4;
+	if (config.z_hop > 0.0)
+		config.comb = false;  /* combing is useless if z-hop is enabled */
 	if (config.cool_on_gcode == NULL)
 		config.cool_on_gcode = strdup(DEFAULT_COOL_ON_STR);
 	if (config.cool_off_gcode == NULL)
