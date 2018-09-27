@@ -2538,37 +2538,26 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 {
 	if (p.size() < 3)
 		return;
-	fl_t total_clip = 0.0;
-	bool first_point = true, do_anchor = false;
-	if (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * config.extrusion_width * 2.0))
-		total_clip += config.shell_clip * config.extrusion_width;
-	if (config.anchor && path_len_is_greater_than(p, total_clip + config.extrusion_width)) {
-		do_anchor = true;
-		total_clip += config.extrusion_width / 2.0 * M_PI_4;
-	}
+	fl_t total_clip = 0.0, anchor_e_len = 0.0;
 	ClipperLib::Path lp = p;
 	if (start_idx != 0)
 		std::rotate(lp.begin(), lp.begin() + start_idx, lp.end());
 	lp.push_back(lp[0]);
+	linear_move(slice, island, m, lp[0].X, lp[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, config.extrusion_width * 2.0);
+	if (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * config.extrusion_width * 2.0))
+		total_clip += config.shell_clip * config.extrusion_width;
+	if (config.anchor && m->is_retracted && path_len_is_greater_than(p, total_clip + config.extrusion_width)) {
+		total_clip += config.extrusion_width / 2.0 * M_PI_4;
+		anchor_e_len = config.extrusion_width / 2.0 * M_PI_4 * config.extrusion_area * config.flow_multiplier / config.material_area;
+	}
 	if (total_clip > 0.0)
 		clip_path_from_end(lp, NULL, total_clip);
 	ClipperLib::Path coast_path;
 	if (config.coast_len > 0.0 && path_len_is_greater_than(p, total_clip + config.coast_len * 2.0))
 		clip_path_from_end(lp, &coast_path, config.coast_len);
-	for (const ClipperLib::IntPoint &point : lp) {
-		if (first_point) {
-			linear_move(slice, island, m, point.X, point.Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, config.extrusion_width * 2.0);
-			first_point = false;
-		}
-		else {
-			fl_t anchor_e_len = 0.0;
-			if (do_anchor) {
-				anchor_e_len = config.extrusion_width / 2.0 * M_PI_4 * config.extrusion_area * config.flow_multiplier / config.material_area;
-				do_anchor = false;
-			}
-			linear_move(slice, island, m, point.X, point.Y, z, anchor_e_len, feed_rate, 1.0, true, false, 0.0);
-		}
-	}
+	linear_move(slice, island, m, lp[1].X, lp[1].Y, z, anchor_e_len, feed_rate, 1.0, true, false, 0.0);
+	for (auto it = lp.begin() + 2; it != lp.end(); ++it)
+		linear_move(slice, island, m, it->X, it->Y, z, 0.0, feed_rate, 1.0, true, false, 0.0);
 	m->is_retracted = true;  /* Make sure we don't retract */
 	m->is_hopped = true;     /* Make sure we don't hop */
 	for (const ClipperLib::IntPoint &point : coast_path)
