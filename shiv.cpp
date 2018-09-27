@@ -164,7 +164,7 @@ static struct {
 	bool retract_after_shells     = false;      /* Retract unconditionally after printing the last shell */
 	fl_t extra_restart_len        = 0.0;        /* Extra material length on restart */
 	fl_t z_hop                    = 0.0;        /* Raise the z axis by this amount after retracting when traveling */
-	fl_t z_hop_angle              = 15.0;       /* Ascent/descent angle for z-hop */
+	fl_t z_hop_angle              = 15.0;       /* Ascent angle for z-hop */
 	int cool_layer                = 2;          /* Turn on part cooling at this layer */
 	char *start_gcode             = NULL;
 	char *end_gcode               = NULL;
@@ -2428,6 +2428,8 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 				|| (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(island, m->x, m->y, x, y)))) {
 			do_retract(slice, m, true);
 		}
+		/* FIXME: hopping will only work correctly if there is only a single travel
+		   move between extrusion moves. This should always be the case currently. */
 		if (z == m->z && m->is_retracted && !m->is_hopped && config.z_hop > 0.0) {
 			if (config.z_hop_angle == 90.0) {
 				move.z += FL_T_TO_CINT(config.z_hop);
@@ -2440,10 +2442,8 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 				const fl_t x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y);  /* m->{x,y} might have changed because of wiping */
 				const fl_t xv = f_x - x0, yv = f_y - y0;
 				const fl_t norm = sqrt(xv * xv + yv * yv);
-				if (norm <= hop_min_travel * 2.0) {
-					const fl_t hop_height = tan(hop_angle_deg) * norm / 2.0;
-					struct g_move hop_move = { (m->x + x) / 2, (m->y + y) / 2, z + FL_T_TO_CINT(hop_height), 0.0, config.travel_feed_rate, false };
-					append_g_move(slice, hop_move, config.z_hop);
+				if (norm <= hop_min_travel) {
+					move.z += FL_T_TO_CINT(tan(hop_angle_deg) * norm);
 				}
 				else {
 					struct g_move hop_move = {
@@ -2451,9 +2451,7 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 						z + FL_T_TO_CINT(config.z_hop), 0.0, config.travel_feed_rate, false
 					};
 					append_g_move(slice, hop_move, 0.0);  /* FIXME: len is not correct, but it doesn't matter currently */
-					hop_move.x = FL_T_TO_CINT(f_x - hop_min_travel * (xv / norm));
-					hop_move.y = FL_T_TO_CINT(f_y - hop_min_travel * (yv / norm));
-					append_g_move(slice, hop_move, 0.0);  /* FIXME: see above */
+					move.z += FL_T_TO_CINT(config.z_hop);
 				}
 			}
 			m->is_hopped = true;
@@ -2462,10 +2460,8 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 	else {
 		if (m->is_retracted) {
 			if (m->is_hopped) {
-				if (config.z_hop_angle == 90.0) {  /* un-hop move is not needed if the angle is 90° */
-					struct g_move unhop_move = { m->x, m->y, m->z, 0.0, config.travel_feed_rate, false };
-					append_g_move(slice, unhop_move, config.z_hop);
-				}
+				struct g_move unhop_move = { m->x, m->y, m->z, 0.0, config.travel_feed_rate, false };
+				append_g_move(slice, unhop_move, config.z_hop);
 				m->is_hopped = false;
 			}
 			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false };

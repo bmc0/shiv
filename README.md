@@ -106,7 +106,7 @@ Setting                    | Default value | Description
 `retract_after_shells`     |       `false` | Retract unconditionally after printing the last shell.
 `extra_restart_len`        |         `0.0` | Extra material length on restart.
 `z_hop`                    |         `0.0` | Raise the z axis by this amount after retracting when traveling.
-`z_hop_angle`              |        `15.0` | Ascent/descent angle for z-hop.
+`z_hop_angle`              |        `15.0` | Ascent angle for z-hop.
 `cool_layer`               |           `2` | Turn on part cooling at this layer (numbered from zero). Set to `-1` to disable cooling.
 `start_gcode`              |        `None` | Prepend this G-code to beginning of the output file.
 `end_gcode`                |        `None` | Append this G-code to the end of the output file.
