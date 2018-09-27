@@ -156,14 +156,12 @@ static struct {
 	fl_t travel_feed_rate         = 120.0;
 	fl_t first_layer_mult         = 0.5;        /* First layer feed rates (except travel) are multiplied by this value */
 	fl_t coast_len                = 0.0;        /* Length to coast (move with the extruder turned off) at the end of a shell */
-	fl_t wipe_len                 = 0.0;        /* Length to wipe the nozzle after printing a shell. A non-zero value will cause an unconditional retract at the end of each shell. */
+	fl_t wipe_len                 = 0.0;        /* Length to wipe the nozzle after retracting */
 	fl_t retract_len              = 1.0;
 	fl_t retract_speed            = 20.0;
-	fl_t moving_retract_speed     = -0.5;       /* Retrect speed when doing non-stationary retracts. A negative value means a multiple of 'retract_speed'. */
 	fl_t restart_speed            = -1.0;       /* A negative value means a multiple of 'retract_speed' */
 	fl_t retract_threshold        = 30.0;       /* Unconditional retraction threshold */
 	bool retract_after_shells     = false;      /* Retract unconditionally after printing the last shell */
-	bool moving_retract           = false;      /* Do a non-stationary retraction at the end of each shell */
 	fl_t extra_restart_len        = 0.0;        /* Extra material length on restart */
 	fl_t z_hop                    = 0.0;        /* Raise the z axis by this amount after retracting when traveling */
 	int cool_layer                = 2;          /* Turn on part cooling at this layer */
@@ -311,11 +309,9 @@ static const struct setting settings[] = {
 	SETTING(wipe_len,                  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(retract_len,               SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(retract_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       FL_T_INF } }, false, false),
-	SETTING(moving_retract_speed,      SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(restart_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(retract_threshold,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(retract_after_shells,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
-	SETTING(moving_retract,            SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(extra_restart_len,         SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(z_hop,                     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(cool_layer,                SETTING_TYPE_INT,            false, false, { .i = { -1,        INT_MAX  } }, true,  true),
@@ -439,7 +435,7 @@ struct island {
 struct g_move {
 	ClipperLib::cInt x, y, z;
 	fl_t e, feed_rate;
-	bool scalable, is_travel, is_restart;
+	bool scalable;
 };
 
 struct slice {
@@ -466,7 +462,7 @@ struct slice {
 struct machine {
 	ClipperLib::cInt x, y, z;
 	fl_t e, feed_rate;
-	bool is_retracted, is_hopped, force_retract;
+	bool is_retracted, is_hopped, is_wiped, force_retract;
 };
 
 static void die(const char *s, int r)
@@ -1355,7 +1351,7 @@ static void generate_insets(struct slice *slice)
 						fl_t lowest = FL_T_INF;
 						auto best = p.begin();
 						for (auto it = best; it != p.end(); ++it) {
-							fl_t v = (*it).X + (*it).Y;
+							fl_t v = it->X + it->Y;
 							if (v < lowest) {
 								best = it;
 								lowest = v;
@@ -2240,28 +2236,61 @@ static size_t find_best_travel_point(const ClipperLib::Paths &b, size_t b_idx, c
 	return r;
 }
 
-static void do_retract(struct slice *slice, struct machine *m)
-{
-	if (!m->is_retracted && config.retract_len > 0.0) {
-		struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false, false };
-		append_g_move(slice, retract_move, config.retract_len);
-		m->is_retracted = true;
-	}
-	m->force_retract = false;
-}
-
 static void append_linear_travel(struct slice *slice, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t feed_rate)
 {
 	if (x != m->x || y != m->y || z != m->z) {
 		const fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
 		const fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
 		const fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
-		const struct g_move move = { x, y, z, 0.0, feed_rate, false, true, false };
+		const struct g_move move = { x, y, z, 0.0, feed_rate, false };
 		append_g_move(slice, move, len);
 		m->x = x;
 		m->y = y;
 		m->z = z;
 	}
+}
+
+static void do_wipe(struct slice *slice, struct machine *m)
+{
+	if (config.wipe_len <= 0.0 || m->is_wiped || slice->moves.size() < 3)
+		return;
+	ClipperLib::Path wipe_moves;
+	fl_t wiped_len = 0.0, x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y);
+	/* moves.rbegin() is the retract move and moves.rbegin() + 1 is the last kinematic move,
+	   so we want to start at moves.rbegin() + 2 */
+	for (auto it = slice->moves.rbegin() + 2; it != slice->moves.rend(); ++it) {
+		const fl_t x1 = CINT_TO_FL_T(it->x), y1 = CINT_TO_FL_T(it->y);
+		if (x1 == x0 && y1 == y0)
+			break;  /* break at first non-kinematic move */
+		const fl_t xv = x1 - x0, yv = y1 - y0;
+		const fl_t norm = sqrt(xv * xv + yv * yv);
+		wiped_len += norm;
+		if (wiped_len >= config.wipe_len) {
+			const fl_t new_x = x1 - (wiped_len - config.wipe_len) * (xv / norm), new_y = y1 - (wiped_len - config.wipe_len) * (yv / norm);
+			wipe_moves.push_back(ClipperLib::IntPoint(FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y)));
+			break;
+		}
+		else {
+			wipe_moves.push_back(ClipperLib::IntPoint(it->x, it->y));
+		}
+		x0 = x1;
+		y0 = y1;
+	}
+	for (ClipperLib::IntPoint &pt : wipe_moves)
+		append_linear_travel(slice, m, pt.X, pt.Y, m->z, config.travel_feed_rate);
+	m->is_wiped = true;
+}
+
+static void do_retract(struct slice *slice, struct machine *m, bool should_wipe)
+{
+	if (!m->is_retracted) {
+		struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false };
+		append_g_move(slice, retract_move, config.retract_len);
+		m->is_retracted = true;
+	}
+	m->force_retract = false;
+	if (should_wipe)
+		do_wipe(slice, m);
 }
 
 static fl_t append_comb_move(const struct machine *m, const struct island *island, ClipperLib::Path &comb_moves, const ClipperLib::IntPoint &p0, const ClipperLib::IntPoint &p1, bool *force_retract)
@@ -2346,7 +2375,7 @@ static void combed_travel(struct slice *slice, const struct island *island, stru
 	}
 	comb_dist += distance_to_point(p0, p1) / config.scale_constant;
 	if (force_retract || comb_dist >= retract_threshold)
-		do_retract(slice, m);
+		do_retract(slice, m, false);  /* can't wipe or we may cross a boundary (wiping is not very useful with combing anyway) */
 	for (ClipperLib::IntPoint &pt : comb_moves)
 		append_linear_travel(slice, m, pt.X, pt.Y, m->z, feed_rate);
 }
@@ -2366,15 +2395,15 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 {
 	const fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
 	const fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
-	struct g_move move = { x, y, z, 0.0, feed_rate, scalable, is_travel, false };
+	struct g_move move = { x, y, z, 0.0, feed_rate, scalable };
 	const fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 	if (is_travel) {
 		if (m->force_retract)
-			do_retract(slice, m);
+			do_retract(slice, m, true);
 		if (z == m->z && config.comb) {  /* NOTE: config.comb is false if z-hop is enabled */
 			if (slice->last_boundaries.size() > 0) {
 				/* Inside an island and moving to a point outside of it */
-				do_retract(slice, m);
+				do_retract(slice, m, true);
 				if (slice->last_comb_paths.size() > 0)
 					move_to_island_exit(slice, m, x, y, feed_rate);
 				slice->last_boundaries.clear();
@@ -2390,28 +2419,28 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 				combed_travel(slice, island, m, slice->printed_outer_boundaries, slice->printed_outer_comb_paths, x, y, feed_rate, retract_threshold);
 			}
 		}
-		else if (!m->is_retracted && config.retract_len > 0.0
+		else if (!m->is_retracted
 			&& (slice->last_boundaries.size() > 0
 				|| len > retract_threshold
 				|| (island && crosses_boundary(m, island->boundaries, x, y) >= 0)
 				|| (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(island, m->x, m->y, x, y)))) {
-			do_retract(slice, m);
+			do_retract(slice, m, true);
 		}
 		if (z == m->z && m->is_retracted && !m->is_hopped && config.z_hop > 0.0) {
 			move.z += FL_T_TO_CINT(config.z_hop);
-			struct g_move hop_move = { m->x, m->y, move.z, 0.0, config.travel_feed_rate, false, true, false };
+			struct g_move hop_move = { m->x, m->y, move.z, 0.0, config.travel_feed_rate, false };
 			append_g_move(slice, hop_move, config.z_hop);
 			m->is_hopped = true;
 		}
 	}
 	else {
-		if (m->is_retracted && config.retract_len > 0.0) {
+		if (m->is_retracted) {
 			if (m->is_hopped) {
-				struct g_move unhop_move = { m->x, m->y, m->z, 0.0, config.travel_feed_rate, false, true, false };
+				struct g_move unhop_move = { m->x, m->y, m->z, 0.0, config.travel_feed_rate, false };
 				append_g_move(slice, unhop_move, config.z_hop);
 				m->is_hopped = false;
 			}
-			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false, false, true };
+			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false };
 			if (config.extra_restart_len < 0.0)
 				restart_move.e += config.extra_restart_len;
 			else
@@ -2421,7 +2450,7 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 		}
 		move.e = len * config.extrusion_area * config.flow_multiplier * flow_adjust / config.material_area;
 		if (extra_e_len != 0.0) {
-			struct g_move extra_e_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true, false, true };
+			struct g_move extra_e_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true };
 			append_g_move(slice, extra_e_move, fabs(extra_e_len));
 		}
 	}
@@ -2432,6 +2461,7 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 		m->z = z;
 	}
 	m->force_retract = false;
+	m->is_wiped = false;
 }
 
 static bool path_len_is_greater_than(const ClipperLib::Path &p, fl_t len)
@@ -2480,66 +2510,6 @@ static void clip_path_from_end(ClipperLib::Path &p, ClipperLib::Path *clipped_po
 		std::reverse(clipped_points->begin(), clipped_points->end());
 }
 
-/* Do a non-stationary retract at the end of a shell. Expects a standard closed path where the first point is also the end point (in other words, no repeated points). */
-static size_t moving_retract(const ClipperLib::Path &p, struct slice *slice, struct machine *m, ClipperLib::cInt z, size_t start_idx, fl_t feed_rate)
-{
-	const fl_t len_ratio = config.moving_retract_speed / feed_rate;
-	const fl_t move_len = config.retract_len / len_ratio;
-	fl_t x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y), l = 0.0, rl = 0.0;
-	size_t i = start_idx;
-	for (;; ++i) {
-		if (i >= p.size())
-			i = 0;
-		const fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
-		const fl_t xv = x1 - x0, yv = y1 - y0;
-		const fl_t norm = sqrt(xv * xv + yv * yv);
-		l += norm;
-		if (rl + norm * len_ratio >= config.retract_len) {
-			const fl_t new_x = x1 - (l - move_len) * (xv / norm), new_y = y1 - (l - move_len) * (yv / norm);
-			const struct g_move move = { FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y), z, -(config.retract_len - rl), feed_rate, false, false, false };
-			append_g_move(slice, move, move_len - (l - norm));
-			m->x = move.x;
-			m->y = move.y;
-			m->z = move.z;
-			break;
-		}
-		else if (norm > 0.0) {
-			const struct g_move move = { p[i].X, p[i].Y, z, -norm * len_ratio, feed_rate, false, false, false };
-			append_g_move(slice, move, norm);
-			/* No need to update m->{x,y,z} */
-		}
-		rl += norm * len_ratio;
-		x0 = x1;
-		y0 = y1;
-	}
-	m->is_retracted = true;
-	return i;
-}
-
-/* Wipe the nozzle at the end of a shell */
-static void shell_wipe(const ClipperLib::Path &p, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, size_t start_idx, fl_t feed_rate)
-{
-	fl_t x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y), l = 0.0;
-	for (size_t i = start_idx;; ++i) {
-		if (i >= p.size())
-			i = 0;
-		const fl_t x1 = CINT_TO_FL_T(p[i].X), y1 = CINT_TO_FL_T(p[i].Y);
-		const fl_t xv = x1 - x0, yv = y1 - y0;
-		const fl_t norm = sqrt(xv * xv + yv * yv);
-		l += norm;
-		if (l >= config.wipe_len) {
-			const fl_t new_x = x1 - (l - config.wipe_len) * (xv / norm), new_y = y1 - (l - config.wipe_len) * (yv / norm);
-			linear_move(slice, island, m, FL_T_TO_CINT(new_x), FL_T_TO_CINT(new_y), z, 0.0, feed_rate, 1.0, false, true, 0.0);
-			break;
-		}
-		else if (norm > 0.0) {
-			linear_move(slice, island, m, p[i].X, p[i].Y, z, 0.0, feed_rate, 1.0, false, true, 0.0);
-		}
-		x0 = x1;
-		y0 = y1;
-	}
-}
-
 static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_idx, struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, fl_t feed_rate)
 {
 	if (p.size() < 3)
@@ -2581,12 +2551,6 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true, 0.0);
 	m->is_retracted = false;
 	m->is_hopped = false;
-	if (config.moving_retract && config.retract_len > 0.0)
-		start_idx = moving_retract(p, slice, m, z, start_idx, feed_rate);
-	if (config.wipe_len > 0.0) {
-		m->force_retract = true;
-		shell_wipe(p, slice, island, m, z, start_idx, feed_rate);
-	}
 }
 
 static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
@@ -2615,6 +2579,7 @@ static void do_support_wipe(struct slice *slice, ClipperLib::Path &last_line, st
 		else
 			linear_move(slice, NULL, m, last_line[0].X, last_line[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, 0.0);
 		m->is_hopped = false;
+		m->is_wiped = true;  /* Don't wipe on next retract */
 	}
 }
 
@@ -2984,37 +2949,44 @@ static void write_gcode_move(FILE *f, const struct g_move *move, struct machine 
 	fl_t feed_rate = move->feed_rate;
 	if (move->scalable) {
 		feed_rate *= feed_rate_mult;
-		const fl_t min_feed_rate = (move->is_restart) ? config.min_feed_rate * config.extrusion_area / config.material_area : config.min_feed_rate;
+		const fl_t min_feed_rate = (move->e > 0.0 && move->x == m->x && move->y == m->y && move->z == m->z)  /* is a scalable e-only move */
+			? config.min_feed_rate * config.extrusion_area / config.material_area : config.min_feed_rate;
 		if (feed_rate < min_feed_rate)
 			feed_rate = min_feed_rate;
 	}
-	if (move->is_travel && move->z != m->z && config.separate_z_travel) {
+	if (move->e == 0.0 && move->z != m->z && config.separate_z_travel) {
 		fprintf(f, "G1 Z%.3f", CINT_TO_FL_T(move->z));
 		if (feed_rate != m->feed_rate)
 			fprintf(f, " F%ld", (feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
 		fputc('\n', f);
 		m->z = move->z;
 	}
-	fputs("G1", f);
-	if (force_xyz || move->x != m->x)
-		fprintf(f, " X%.3f", CINT_TO_FL_T(move->x));
-	if (force_xyz || move->y != m->y)
-		fprintf(f, " Y%.3f", CINT_TO_FL_T(move->y));
-	if (force_xyz || move->z != m->z)
-		fprintf(f, " Z%.3f", CINT_TO_FL_T(move->z));
-	if (move->e != 0.0)
-		fprintf(f, " E%.5f", m->e + move->e);
-	if (feed_rate != m->feed_rate)
-		fprintf(f, " F%ld", (feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
-	fputc('\n', f);
-	m->x = move->x;
-	m->y = move->y;
-	m->z = move->z;
-	m->e += move->e;
-	m->feed_rate = feed_rate;
+	const bool x_changed = move->x != m->x;
+	const bool y_changed = move->y != m->y;
+	const bool z_changed = move->z != m->z;
+	const bool e_changed = move->e != 0.0;
+	if (force_xyz || x_changed || y_changed || z_changed || e_changed) {
+		fputs("G1", f);
+		if (force_xyz || x_changed)
+			fprintf(f, " X%.3f", CINT_TO_FL_T(move->x));
+		if (force_xyz || y_changed)
+			fprintf(f, " Y%.3f", CINT_TO_FL_T(move->y));
+		if (force_xyz || z_changed)
+			fprintf(f, " Z%.3f", CINT_TO_FL_T(move->z));
+		if (e_changed)
+			fprintf(f, " E%.5f", m->e + move->e);
+		if (feed_rate != m->feed_rate)
+			fprintf(f, " F%ld", (feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
+		fputc('\n', f);
+		m->x = move->x;
+		m->y = move->y;
+		m->z = move->z;
+		m->e += move->e;
+		m->feed_rate = feed_rate;
+	}
 }
 
-#define NEW_PLAN_MACHINE(name, obj) struct machine name = { FL_T_TO_CINT(obj->c.x - (obj->w + config.xy_extra) / 2.0), FL_T_TO_CINT(obj->c.y - (obj->d + config.xy_extra) / 2.0), 0, 0.0, 0.0, true, false, false }
+#define NEW_PLAN_MACHINE(name, obj) struct machine name = { FL_T_TO_CINT(obj->c.x - (obj->w + config.xy_extra) / 2.0), FL_T_TO_CINT(obj->c.y - (obj->d + config.xy_extra) / 2.0), 0, 0.0, 0.0, true, false, true, false }
 
 static int write_gcode(const char *path, struct object *o)
 {
@@ -3040,7 +3012,7 @@ static int write_gcode(const char *path, struct object *o)
 		NEW_PLAN_MACHINE(plan_m, o);
 	#endif
 		plan_raft(o, &raft_dummy_slice, &plan_m);
-		do_retract(&raft_dummy_slice, &plan_m);
+		do_retract(&raft_dummy_slice, &plan_m, true);
 		fputs("; raft\n", f);
 		for (const struct g_move &move : raft_dummy_slice.moves) {
 			write_gcode_move(f, &move, &export_m, 1.0, is_first_move);
@@ -3056,7 +3028,7 @@ static int write_gcode(const char *path, struct object *o)
 		NEW_PLAN_MACHINE(plan_m, o);
 	#endif
 		plan_moves(o, slice, i, &plan_m);
-		do_retract(slice, &plan_m);
+		do_retract(slice, &plan_m, true);
 	#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING) && defined(_OPENMP)
 		#pragma omp ordered
 		{
@@ -3254,7 +3226,6 @@ int main(int argc, char *argv[])
 	config.support_feed_rate = GET_FEED_RATE(config.support_feed_rate, config.feed_rate);
 	config.iron_feed_rate = GET_FEED_RATE(config.iron_feed_rate, config.solid_infill_feed_rate);
 	config.travel_feed_rate = GET_FEED_RATE(config.travel_feed_rate, config.feed_rate);
-	config.moving_retract_speed = GET_FEED_RATE(config.moving_retract_speed, config.retract_speed);
 	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);
 
 	if (print_config) {
