@@ -210,7 +210,6 @@ static struct {
 	fl_t interface_density        = 0.7;        /* Support interface density */
 	fl_t interface_clip_offset;
 	fl_t support_flow_mult        = 0.75;       /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. The default works well for PLA, but should be increased for materials that have trouble bridging (like PETG). */
-	fl_t support_wipe_len         = 5.0;        /* Wipe the nozzle over the previously printed line if a boundary will be crossed */
 	fl_t min_layer_time           = 8.0;        /* Slow down if the estimated layer time is less than this value */
 	int layer_time_samples        = 5;          /* Number of samples in the layer time moving average */
 	fl_t min_feed_rate            = 10.0;
@@ -361,7 +360,6 @@ static const struct setting settings[] = {
 	SETTING(interface_density,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(interface_clip_offset,     SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
 	SETTING(support_flow_mult,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
-	SETTING(support_wipe_len,          SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(min_layer_time,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(layer_time_samples,        SETTING_TYPE_INT,            false, false, { .i = { 1,         INT_MAX  } }, true,  true),
 	SETTING(min_feed_rate,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       FL_T_INF } }, false, false),
@@ -2579,42 +2577,24 @@ static void plan_brim(struct object *o, struct machine *m, ClipperLib::cInt z)
 	m->force_retract = true;
 }
 
-static void do_support_wipe(struct slice *slice, ClipperLib::Path &last_line, struct machine *m, ClipperLib::cInt z)
-{
-	if (config.support_wipe_len > 0.0) {
-		m->force_retract = true;
-		m->is_hopped = true;  /* Make sure we don't hop */
-		const fl_t xv = last_line[1].X - last_line[0].X;
-		const fl_t yv = last_line[1].Y - last_line[0].Y;
-		const fl_t norm = sqrt(xv * xv + yv * yv);
-		if (norm > config.support_wipe_len * config.scale_constant)
-			linear_move(slice, NULL, m, last_line[1].X - config.support_wipe_len * config.scale_constant * (xv / norm), last_line[1].Y - config.support_wipe_len * config.scale_constant * (yv / norm), z, 0.0, config.travel_feed_rate, 1.0, false, true, 0.0);
-		else
-			linear_move(slice, NULL, m, last_line[0].X, last_line[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, 0.0);
-		m->is_hopped = false;
-		m->is_wiped = true;  /* Don't wipe on next retract */
-	}
-}
-
 static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct machine *m, ClipperLib::cInt z, fl_t min_len, fl_t connect_threshold, fl_t flow_adjust, fl_t feed_rate)
 {
-	ClipperLib::Path last_line(2);
 	bool first = true;
 	while (!lines.empty()) {
 		bool flip_points;
 		fl_t best_dist;
 		size_t best = find_nearest_segment(lines, m->x, m->y, &best_dist, &flip_points);
 		ClipperLib::Path &p = lines[best];
-		const fl_t x0 = CINT_TO_FL_T(p[0].X), y0 = CINT_TO_FL_T(p[0].Y);
-		const fl_t x1 = CINT_TO_FL_T(p[1].X), y1 = CINT_TO_FL_T(p[1].Y);
-		const fl_t len = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+		const fl_t len = distance_to_point(p[0], p[1]) / config.scale_constant;
 		if (len > min_len) {
 			bool cross_bound = false;
+			if (flip_points)
+				std::swap(p[0], p[1]);
 			if (!first) {
 				const ClipperLib::IntPoint p0(m->x, m->y);
 				for (const struct island &island : slice->islands) {
 					for (const ClipperLib::Path &bound : island.outer_boundaries) {
-						if (get_boundary_crossing(bound, last_line[0], last_line[1]) >= 0 || get_boundary_crossing(bound, p0, (flip_points) ? p[1] : p[0]) >= 0) {
+						if (get_boundary_crossing(bound, p0, p[0]) >= 0) {
 							cross_bound = true;
 							m->force_retract = true;
 							break;
@@ -2623,22 +2603,15 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 				}
 			}
 			bool connect = (!first && !cross_bound && best_dist < connect_threshold);
-			if (!first && cross_bound)
-				do_support_wipe(slice, last_line, m, z);
-			if (flip_points)
-				std::swap(p[0], p[1]);
 			if (connect)
 				linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, 0.0);
 			else
 				linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, config.retract_threshold);
 			linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, 0.0);
-			last_line = p;
 			first = false;
 		}
 		lines.erase(lines.begin() + best);
 	}
-	if (!first)
-		do_support_wipe(slice, last_line, m, z);
 }
 
 static void plan_insets_weighted(struct slice *slice, struct island *island, struct machine *m, ClipperLib::cInt z, bool outside_first)

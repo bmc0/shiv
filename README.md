@@ -151,7 +151,6 @@ Setting                    | Default value | Description
 `support_density`          |         `0.2` | Support structure density.
 `interface_density`        |         `0.7` | Support interface density.
 `support_flow_mult`        |        `0.75` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. The default works well for PLA, but should be increased for materials that have trouble bridging (like PETG).
-`support_wipe_len`         |         `5.0` | Wipe the nozzle over the previously printed line if a boundary will be crossed.
 `min_layer_time`           |         `8.0` | Minimum layer time.
 `layer_time_samples`       |           `5` | Number of samples in the layer time moving average.
 `min_feed_rate`            |        `10.0` | Minimum feed rate.
