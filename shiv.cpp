@@ -65,7 +65,7 @@ typedef double fl_t;
 
 static const char e_nomem[] = "fatal: No memory\n";
 static const char usage_string[] =
-	"usage: shiv [-hpP] [-o output_path] [-c config_path] [-S setting=value]\n"
+	"usage: shiv [-hp] [-o output_path] [-c config_path] [-S setting=value]\n"
 	"            [-l layer_height] [-w extrusion_width] [-t tolerance]\n"
 	"            [-s scale_factor] [-d infill_density] [-n shells]\n"
 	"            [-r roof_thickness] [-f floor_thickness] [-b brim_width]\n"
@@ -74,8 +74,7 @@ static const char usage_string[] =
 	"\n"
 	"flags:\n"
 	"  -h                    show this help\n"
-	"  -p                    preview slices (pipe stdout to gnuplot)\n"
-	"  -P                    print configuration\n"
+	"  -p                    print configuration\n"
 	"  -o output_path        output gcode path\n"
 	"  -c config_path        configuration file path\n"
 	"  -S setting=value      set setting to value\n"
@@ -1913,100 +1912,6 @@ static void slice_object(struct object *o)
 		(double) std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000000.0);
 }
 
-static void preview_slices(const struct object *o)
-{
-	ssize_t i;
-	fprintf(stdout, "set size ratio -1\n");
-	fprintf(stdout, "set xrange [%e:%e]\n", o->c.x - (o->w + config.xy_extra) / 2.0, o->c.x + (o->w + config.xy_extra) / 2.0);
-	fprintf(stdout, "set yrange [%e:%e]\n", o->c.y - (o->d + config.xy_extra) / 2.0, o->c.y + (o->d + config.xy_extra) / 2.0);
-	for (i = 0; i < o->n_slices; ++i) {
-		fprintf(stderr, "layer %zd/%zd: intersections = %zd; islands = %zd\n", i + 1, o->n_slices, o->slices[i].n_seg, o->slices[i].islands.size());
-		fprintf(stdout, "set title 'Layer %zd/%zd'\n", i + 1, o->n_slices);
-		/* Draw outlines */
-		fprintf(stdout, "plot \"-\" lc \"red\" dt 3 with lines title \"boundaries\", \"-\" lc \"blue\" with lines title \"insets\", \"-\" lc \"green\" with lines title \"infill\"\n");
-		for (const struct island &island : o->slices[i].islands) {
-			for (const ClipperLib::Path &path : island.boundaries) {
-				if (path.size() >= 3) {
-					for (const ClipperLib::IntPoint &p : path)
-						fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
-					fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
-					putc('\n', stdout);
-				}
-			}
-			fprintf(stdout, "%.4e %.4e\n", ((double) island.box.x0) / config.scale_constant, ((double) island.box.y0) / config.scale_constant);
-			fprintf(stdout, "%.4e %.4e\n", ((double) island.box.x1) / config.scale_constant, ((double) island.box.y0) / config.scale_constant);
-			fprintf(stdout, "%.4e %.4e\n", ((double) island.box.x1) / config.scale_constant, ((double) island.box.y1) / config.scale_constant);
-			fprintf(stdout, "%.4e %.4e\n", ((double) island.box.x0) / config.scale_constant, ((double) island.box.y1) / config.scale_constant);
-			fprintf(stdout, "%.4e %.4e\n\n", ((double) island.box.x0) / config.scale_constant, ((double) island.box.y0) / config.scale_constant);
-		}
-		/* Draw support map */
-		for (const ClipperLib::Path &path : o->slices[i].support_map) {
-			if (path.size() >= 3) {
-				for (const ClipperLib::IntPoint &p : path)
-					fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
-				fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
-				putc('\n', stdout);
-			}
-		}
-		fprintf(stdout, "e\n");
-		/* Draw insets */
-		for (const struct island &island : o->slices[i].islands) {
-			for (int k = 0; k < config.shells; ++k) {
-				for (const ClipperLib::Path &path : island.insets[k]) {
-					if (path.size() >= 3) {
-						for (const ClipperLib::IntPoint &p : path)
-							fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
-						fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
-						putc('\n', stdout);
-					}
-				}
-			}
-		}
-		/* Draw brim */
-		if (i == 0) {
-			for (const ClipperLib::Paths &paths : o->brim) {
-				for (const ClipperLib::Path &path : paths) {
-					if (path.size() >= 3) {
-						for (const ClipperLib::IntPoint &p : path)
-							fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
-						fprintf(stdout, "%.4e %.4e\n", ((double) path[0].X) / config.scale_constant, ((double) path[0].Y) / config.scale_constant);
-						putc('\n', stdout);
-					}
-				}
-			}
-		}
-		fprintf(stdout, "e\n");
-		/* Draw infill */
-		for (const struct island &island : o->slices[i].islands) {
-			for (const ClipperLib::Path &path : island.solid_infill) {
-				for (const ClipperLib::IntPoint &p : path)
-					fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
-				putc('\n', stdout);
-			}
-			for (const ClipperLib::Path &path : island.sparse_infill) {
-				for (const ClipperLib::IntPoint &p : path)
-					fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
-				putc('\n', stdout);
-			}
-		}
-		/* Draw support lines */
-		for (const ClipperLib::Path &path : o->slices[i].support_lines) {
-			for (const ClipperLib::IntPoint &p : path)
-				fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
-			putc('\n', stdout);
-		}
-		for (const ClipperLib::Path &path : o->slices[i].support_interface_lines) {
-			for (const ClipperLib::IntPoint &p : path)
-				fprintf(stdout, "%.4e %.4e\n", ((double) p.X) / config.scale_constant, ((double) p.Y) / config.scale_constant);
-			putc('\n', stdout);
-		}
-		fprintf(stdout, "e\n");
-		fflush(stdout);
-		fprintf(stderr, "press enter for next layer...");
-		getchar();
-	}
-}
-
 /* 0 is colinear, 1 is counter-clockwise and -1 is clockwise */
 static int triplet_orientation(const ClipperLib::IntPoint &a, const ClipperLib::IntPoint &b, const ClipperLib::IntPoint &c)
 {
@@ -3073,10 +2978,10 @@ int main(int argc, char *argv[])
 	char *path, *output_path = NULL;
 	struct object o;
 	fl_t scale_factor = 1.0, x_translate = 0.0, y_translate = 0.0, z_chop = 0.0;
-	bool do_preview = false, print_config = false;
+	bool print_config = false;
 
 	/* Parse options */
-	while ((opt = getopt(argc, argv, ":hpPo:c:O:S:l:w:t:s:d:n:r:f:b:C:x:y:z:")) != -1) {
+	while ((opt = getopt(argc, argv, ":hpo:c:O:S:l:w:t:s:d:n:r:f:b:C:x:y:z:")) != -1) {
 		char *key, *value;
 		int ret;
 		switch (opt) {
@@ -3084,9 +2989,6 @@ int main(int argc, char *argv[])
 			fputs(usage_string, stderr);
 			return 0;
 		case 'p':
-			do_preview = true;
-			break;
-		case 'P':
 			print_config = true;
 			break;
 		case 'o':
@@ -3267,8 +3169,6 @@ int main(int argc, char *argv[])
 
 	fprintf(stderr, "slice object...\n");
 	slice_object(&o);
-	if (do_preview)
-		preview_slices(&o);
 	if (output_path) {
 		if (write_gcode(output_path, &o)) {
 			fprintf(stderr, "error: failed to write gcode output: %s: %s\n", output_path, strerror(errno));
