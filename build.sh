@@ -6,7 +6,7 @@ fail() {
 }
 
 [ -z "$CXX" ] && CXX="g++"
-CXXFLAGS="-O2 -std=gnu++11 -Wall -Wextra -fopenmp $CXXFLAGS"
+CXXFLAGS="-O2 -std=gnu++11 -Wall -Wextra -fopenmp -flto $CXXFLAGS"
 LDFLAGS="-lm $LDFLAGS"
 
 $CXX -o shiv $CXXFLAGS $LDFLAGS $CPPFLAGS shiv.cpp clipper.cpp || fail $?
