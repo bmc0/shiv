@@ -24,6 +24,9 @@
 #include <limits>
 #include <chrono>
 #include <algorithm>
+#include <iostream>
+#include <sstream>
+#include <iomanip>
 #include <getopt.h>
 #ifdef _OPENMP
 #include <omp.h>
@@ -40,10 +43,6 @@
 typedef float fl_t;
 #else
 typedef double fl_t;
-#endif
-
-#ifdef SHIV_SINGLE_THREADED_PATH_PLANNING
-#pragma message("using single-threaded path planner")
 #endif
 
 #define LENGTH(x) (sizeof(x) / sizeof(x[0]))
@@ -210,7 +209,6 @@ static struct {
 	fl_t interface_clip_offset;
 	fl_t support_flow_mult        = 0.75;       /* Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. The default works well for PLA, but should be increased for materials that have trouble bridging (like PETG). */
 	fl_t min_layer_time           = 8.0;        /* Slow down if the estimated layer time is less than this value */
-	int layer_time_samples        = 5;          /* Number of samples in the layer time moving average */
 	fl_t min_feed_rate            = 10.0;
 	fl_t brim_width               = 0.0;
 	int brim_lines;
@@ -360,7 +358,6 @@ static const struct setting settings[] = {
 	SETTING(interface_clip_offset,     SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
 	SETTING(support_flow_mult,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, false, true),
 	SETTING(min_layer_time,            SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
-	SETTING(layer_time_samples,        SETTING_TYPE_INT,            false, false, { .i = { 1,         INT_MAX  } }, true,  true),
 	SETTING(min_feed_rate,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       FL_T_INF } }, false, false),
 	SETTING(brim_width,                SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(brim_lines,                SETTING_TYPE_INT,            true,  false, { .i = { 0,         0        } }, false, false),
@@ -455,6 +452,7 @@ struct slice {
 	ClipperLib::Paths support_interface_lines;
 	ClipperLib::Paths last_boundaries, last_comb_paths;
 	ClipperLib::Paths printed_outer_boundaries, printed_outer_comb_paths;
+	std::ostringstream gcode;
 	fl_t layer_time;
 };
 
@@ -1870,8 +1868,10 @@ static void slice_object(struct object *o)
 	#ifdef _OPENMP
 		#pragma omp parallel for schedule(dynamic)
 	#endif
-		for (i = 0; i < o->n_slices; ++i)
+		for (i = 0; i < o->n_slices; ++i) {
 			generate_support_maps(o, &o->slices[i].layer_support_map, i);
+			o->slices[i].layer_support_map.Clear();
+		}
 	#ifdef _OPENMP
 		#pragma omp parallel for schedule(dynamic)
 	#endif
@@ -1891,6 +1891,14 @@ static void slice_object(struct object *o)
 	#endif
 		for (i = 0; i < o->n_slices; ++i)
 			generate_support_lines(o, &o->slices[i], i);
+		/* Free unneeded memory */
+	#ifdef _OPENMP
+		#pragma omp parallel for schedule(dynamic)
+	#endif
+		for (i = 0; i < o->n_slices; ++i) {
+			FREE_VECTOR(o->slices[i].support_boundaries);
+			FREE_VECTOR(o->slices[i].support_interface_clip);
+		}
 		fputs(" done\n", stderr);
 	}
 	if (config.brim_lines > 0) {
@@ -1902,6 +1910,15 @@ static void slice_object(struct object *o)
 		fputs("  generate raft...", stderr);
 		generate_raft(o);
 		fputs(" done\n", stderr);
+	}
+	/* Free unneeded memory */
+	if (config.generate_support) {
+	#ifdef _OPENMP
+		#pragma omp parallel for schedule(dynamic)
+	#endif
+		for (i = 0; i < o->n_slices; ++i) {
+			FREE_VECTOR(o->slices[i].support_map);
+		}
 	}
 #ifdef _OPENMP
 	for (i = 0; i < o->n_slices; ++i)
@@ -2809,6 +2826,7 @@ static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num,
 		slice->islands.erase(slice->islands.begin() + best);
 	}
 	m->force_retract = true;  /* Force retract on layer change */
+	FREE_VECTOR(slice->islands);
 	if (config.comb) {
 		FREE_VECTOR(slice->last_boundaries);
 		FREE_VECTOR(slice->last_comb_paths);
@@ -2835,7 +2853,7 @@ static void plan_raft(struct object *o, struct slice *slice, struct machine *m)
 	m->force_retract = true;
 }
 
-static void write_gcode_move(FILE *f, const struct g_move *move, struct machine *m, fl_t feed_rate_mult, bool force_xyz)
+static void write_gcode_move(std::ostringstream &ss, const struct g_move *move, struct machine *m, fl_t feed_rate_mult, bool force_xyz)
 {
 	fl_t feed_rate = move->feed_rate;
 	if (move->scalable) {
@@ -2845,11 +2863,12 @@ static void write_gcode_move(FILE *f, const struct g_move *move, struct machine 
 		if (feed_rate < min_feed_rate)
 			feed_rate = min_feed_rate;
 	}
+	ss << std::fixed << std::setprecision(3);
 	if (move->e == 0.0 && move->z != m->z && config.separate_z_travel) {
-		fprintf(f, "G1 Z%.3f", CINT_TO_FL_T(move->z));
+		ss << "G1 Z" << CINT_TO_FL_T(move->z);
 		if (feed_rate != m->feed_rate)
-			fprintf(f, " F%ld", (feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
-		fputc('\n', f);
+			ss << " F" << ((feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
+		ss << '\n';
 		m->z = move->z;
 	}
 	const bool x_changed = move->x != m->x;
@@ -2857,18 +2876,18 @@ static void write_gcode_move(FILE *f, const struct g_move *move, struct machine 
 	const bool z_changed = move->z != m->z;
 	const bool e_changed = move->e != 0.0;
 	if (force_xyz || x_changed || y_changed || z_changed || e_changed) {
-		fputs("G1", f);
+		ss << "G1";
 		if (force_xyz || x_changed)
-			fprintf(f, " X%.3f", CINT_TO_FL_T(move->x));
+			ss << " X" << CINT_TO_FL_T(move->x);
 		if (force_xyz || y_changed)
-			fprintf(f, " Y%.3f", CINT_TO_FL_T(move->y));
+			ss << " Y" << CINT_TO_FL_T(move->y);
 		if (force_xyz || z_changed)
-			fprintf(f, " Z%.3f", CINT_TO_FL_T(move->z));
+			ss << " Z" << CINT_TO_FL_T(move->z);
 		if (e_changed)
-			fprintf(f, " E%.5f", m->e + move->e);
+			ss << " E" << std::setprecision(5) << (m->e + move->e) << std::setprecision(3);
 		if (feed_rate != m->feed_rate)
-			fprintf(f, " F%ld", (feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
-		fputc('\n', f);
+			ss << " F" << ((feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
+		ss << '\n';
 		m->x = move->x;
 		m->y = move->y;
 		m->z = move->z;
@@ -2888,85 +2907,88 @@ static int write_gcode(const char *path, struct object *o)
 		f = fopen(path, "w");
 	if (!f)
 		return 1;
-	bool is_first_move = true;
-#if defined(SHIV_SINGLE_THREADED_PATH_PLANNING)
-	NEW_PLAN_MACHINE(plan_m, o);
-#endif
-	struct machine export_m = {};
 	fl_t total_e = 0.0;
-	fl_t feed_rate_mult = config.first_layer_mult;
-	fprintf(stderr, "plan moves and write gcode to %s...", path);
-	write_gcode_string(config.start_gcode, f, false);
+	struct slice raft_dummy_slice;
+
+	/* Plan moves and generate g-code in memory */
+	fputs("plan moves...", stderr);
 	if (config.generate_raft) {
-		struct slice raft_dummy_slice;
-	#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING)
 		NEW_PLAN_MACHINE(plan_m, o);
-	#endif
 		plan_raft(o, &raft_dummy_slice, &plan_m);
 		do_retract(&raft_dummy_slice, &plan_m, true);
 		fputs("; raft\n", f);
+		bool is_first_move = true;
+		struct machine export_m = {};
+		/* Convert g_moves to gcode */
 		for (const struct g_move &move : raft_dummy_slice.moves) {
-			write_gcode_move(f, &move, &export_m, 1.0, is_first_move);
+			write_gcode_move(raft_dummy_slice.gcode, &move, &export_m, 1.0, is_first_move);
 			is_first_move = false;
 		}
+		total_e += export_m.e;
+		FREE_VECTOR(raft_dummy_slice.moves);
 	}
-#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING) && defined(_OPENMP)
-	#pragma omp parallel for ordered schedule(dynamic)
+#ifdef _OPENMP
+	#pragma omp parallel for schedule(dynamic) reduction(+:total_e)
 #endif
 	for (ssize_t i = 0; i < o->n_slices; ++i) {
 		struct slice *slice = &o->slices[i];
-	#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING)
+		fl_t feed_rate_mult = (i == 0) ? config.first_layer_mult : 1.0;
 		NEW_PLAN_MACHINE(plan_m, o);
-	#endif
 		plan_moves(o, slice, i, &plan_m);
 		do_retract(slice, &plan_m, true);
-	#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING) && defined(_OPENMP)
-		#pragma omp ordered
-		{
-	#endif
+		fl_t layer_time = slice->layer_time / feed_rate_mult;
+		if (layer_time < config.min_layer_time)
+			feed_rate_mult *= layer_time / config.min_layer_time;
+		bool is_first_move = true;
+		struct machine export_m = {};
+		/* Convert g_moves to gcode */
+		for (const struct g_move &move : slice->moves) {
+			write_gcode_move(slice->gcode, &move, &export_m, feed_rate_mult, is_first_move);
+			is_first_move = false;
+		}
+		total_e += export_m.e;
+		FREE_VECTOR(slice->moves);
+	}
+	fputs(" done\n", stderr);
+
+	/* Write g-code to file */
+	fprintf(stderr, "write gcode to %s...", path);
+	write_gcode_string(config.start_gcode, f, false);
+	if (config.generate_raft) {
+		fputs(raft_dummy_slice.gcode.str().c_str(), f);
+		FREE_VECTOR(raft_dummy_slice.gcode);  /* not actually a vector, but it works */
+	}
+	for (ssize_t i = 0; i < o->n_slices; ++i) {
+		struct slice *slice = &o->slices[i];
 		fprintf(f, "; layer %zd (z = %f)\n", i, ((fl_t) i) * config.layer_height + config.layer_height + config.object_z_extra);
 		for (struct at_layer_gcode &g : config.at_layer)
 			if (g.layer == i)
 				write_gcode_string(g.value, f, false);
 		if (i == config.cool_layer)
 			write_gcode_string(config.cool_on_gcode, f, false);
-		fl_t average_layer_time = slice->layer_time / feed_rate_mult;
-		for (int k = 1; k < config.layer_time_samples; ++k)
-			average_layer_time += (k < i) ? o->slices[i - k].layer_time : o->slices[0].layer_time / config.first_layer_mult;
-		average_layer_time /= config.layer_time_samples;
-		if (average_layer_time < config.min_layer_time)
-			feed_rate_mult *= average_layer_time / config.min_layer_time;
-		for (const struct g_move &move : slice->moves) {
-			write_gcode_move(f, &move, &export_m, feed_rate_mult, is_first_move);
-			is_first_move = false;
-		}
-		feed_rate_mult = 1.0;
-		total_e += export_m.e;
-		export_m.e = 0.0;
+		fputs(slice->gcode.str().c_str(), f);
+		FREE_VECTOR(slice->gcode);
 		fputs("G92 E0\n", f);
-	#if !defined(SHIV_SINGLE_THREADED_PATH_PLANNING) && defined(_OPENMP)
-		}
-	#endif
-		FREE_VECTOR(slice->moves);
 	}
 	write_gcode_string(config.cool_off_gcode, f, false);
 	write_gcode_string(config.end_gcode, f, false);
-	fputs(" done\n", stderr);
 	const fl_t mass = config.material_area * total_e * config.material_density / config.flow_multiplier;
 	fprintf(f, "; material length = %.4f\n", total_e / config.flow_multiplier);
 	fprintf(f, "; material mass   = %.4f\n", mass);
 	fprintf(f, "; material cost   = %.4f\n", mass * config.material_cost);
+	const long int bytes = ftell(f);
+	fclose(f);
+	fputs(" done\n", stderr);
+
 	fprintf(stderr, "material length = %.4f\n", total_e / config.flow_multiplier);
 	fprintf(stderr, "material mass   = %.4f\n", mass);
 	fprintf(stderr, "material cost   = %.4f\n", mass * config.material_cost);
-	const long int bytes = ftell(f);
 	if (bytes >= 2048 * 1024)
 		fprintf(stderr, "wrote %.2fMiB\n", bytes / 1024.0 / 1024.0);
 	else if (bytes >= 2048)
 		fprintf(stderr, "wrote %.2fKiB\n", bytes / 1024.0);
 	else
 		fprintf(stderr, "wrote %ldB\n", bytes);
-	fclose(f);
 	return 0;
 }
 

@@ -151,7 +151,6 @@ Setting                    | Default value | Description
 `interface_density`        |         `0.7` | Support interface density.
 `support_flow_mult`        |        `0.75` | Flow rate is multiplied by this value for the support structure. Smaller values will generate a weaker support structure, but it will be easier to remove. The default works well for PLA, but should be increased for materials that have trouble bridging (like PETG).
 `min_layer_time`           |         `8.0` | Minimum layer time.
-`layer_time_samples`       |           `5` | Number of samples in the layer time moving average.
 `min_feed_rate`            |        `10.0` | Minimum feed rate.
 `brim_width`               |         `0.0` | Brim width.
 `brim_adhesion_factor`     |         `0.5` | How stuck to the object the brim is. 0 is just touching and 1 is packed as tightly as normal shells.
