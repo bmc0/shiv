@@ -2907,28 +2907,29 @@ static int write_gcode(const char *path, struct object *o)
 		f = fopen(path, "w");
 	if (!f)
 		return 1;
-	fl_t total_e = 0.0;
-	struct slice raft_dummy_slice;
+	fl_t total_e = 0.0, total_time = 0.0;
+	struct slice *raft_dummy_slice;
 
 	/* Plan moves and generate g-code in memory */
 	fputs("plan moves...", stderr);
 	if (config.generate_raft) {
 		NEW_PLAN_MACHINE(plan_m, o);
-		plan_raft(o, &raft_dummy_slice, &plan_m);
-		do_retract(&raft_dummy_slice, &plan_m, true);
-		fputs("; raft\n", f);
+		raft_dummy_slice = new struct slice;
+		plan_raft(o, raft_dummy_slice, &plan_m);
+		do_retract(raft_dummy_slice, &plan_m, true);
 		bool is_first_move = true;
 		struct machine export_m = {};
 		/* Convert g_moves to gcode */
-		for (const struct g_move &move : raft_dummy_slice.moves) {
-			write_gcode_move(raft_dummy_slice.gcode, &move, &export_m, 1.0, is_first_move);
+		for (const struct g_move &move : raft_dummy_slice->moves) {
+			write_gcode_move(raft_dummy_slice->gcode, &move, &export_m, 1.0, is_first_move);
 			is_first_move = false;
 		}
 		total_e += export_m.e;
-		FREE_VECTOR(raft_dummy_slice.moves);
+		total_time += raft_dummy_slice->layer_time;
+		FREE_VECTOR(raft_dummy_slice->moves);
 	}
 #ifdef _OPENMP
-	#pragma omp parallel for schedule(dynamic) reduction(+:total_e)
+	#pragma omp parallel for schedule(dynamic) reduction(+:total_e,total_time)
 #endif
 	for (ssize_t i = 0; i < o->n_slices; ++i) {
 		struct slice *slice = &o->slices[i];
@@ -2937,7 +2938,7 @@ static int write_gcode(const char *path, struct object *o)
 		plan_moves(o, slice, i, &plan_m);
 		do_retract(slice, &plan_m, true);
 		fl_t layer_time = slice->layer_time / feed_rate_mult;
-		if (layer_time < config.min_layer_time)
+		if (layer_time > 0.0 && layer_time < config.min_layer_time)
 			feed_rate_mult *= layer_time / config.min_layer_time;
 		bool is_first_move = true;
 		struct machine export_m = {};
@@ -2947,6 +2948,7 @@ static int write_gcode(const char *path, struct object *o)
 			is_first_move = false;
 		}
 		total_e += export_m.e;
+		total_time += slice->layer_time / feed_rate_mult;
 		FREE_VECTOR(slice->moves);
 	}
 	fputs(" done\n", stderr);
@@ -2955,8 +2957,9 @@ static int write_gcode(const char *path, struct object *o)
 	fprintf(stderr, "write gcode to %s...", path);
 	write_gcode_string(config.start_gcode, f, false);
 	if (config.generate_raft) {
-		fputs(raft_dummy_slice.gcode.str().c_str(), f);
-		FREE_VECTOR(raft_dummy_slice.gcode);  /* not actually a vector, but it works */
+		fputs("; raft\n", f);
+		fputs(raft_dummy_slice->gcode.str().c_str(), f);
+		delete raft_dummy_slice;
 	}
 	for (ssize_t i = 0; i < o->n_slices; ++i) {
 		struct slice *slice = &o->slices[i];
@@ -2976,6 +2979,7 @@ static int write_gcode(const char *path, struct object *o)
 	fprintf(f, "; material length = %.4f\n", total_e / config.flow_multiplier);
 	fprintf(f, "; material mass   = %.4f\n", mass);
 	fprintf(f, "; material cost   = %.4f\n", mass * config.material_cost);
+	fprintf(f, "; print time      = %.2d:%.2d:%02.0lf\n", (int) (total_time / 3600.0), (int) (total_time / 60.0) % 60, fmod(total_time, 60.0));
 	const long int bytes = ftell(f);
 	fclose(f);
 	fputs(" done\n", stderr);
@@ -2983,6 +2987,7 @@ static int write_gcode(const char *path, struct object *o)
 	fprintf(stderr, "material length = %.4f\n", total_e / config.flow_multiplier);
 	fprintf(stderr, "material mass   = %.4f\n", mass);
 	fprintf(stderr, "material cost   = %.4f\n", mass * config.material_cost);
+	fprintf(stderr, "print time      = %.2d:%.2d:%02.0lf\n", (int) (total_time / 3600.0), (int) (total_time / 60.0) % 60, fmod(total_time, 60.0));
 	if (bytes >= 2048 * 1024)
 		fprintf(stderr, "wrote %.2fMiB\n", bytes / 1024.0 / 1024.0);
 	else if (bytes >= 2048)
