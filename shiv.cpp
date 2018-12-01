@@ -2900,6 +2900,7 @@ static void write_gcode_move(std::ostringstream &ss, const struct g_move *move, 
 
 static int write_gcode(const char *path, struct object *o)
 {
+	std::chrono::time_point<std::chrono::high_resolution_clock> start;
 	FILE *f;
 	if (strcmp(path, "-") == 0)
 		f = stdout;
@@ -2912,6 +2913,7 @@ static int write_gcode(const char *path, struct object *o)
 
 	/* Plan moves and generate g-code in memory */
 	fputs("plan moves...", stderr);
+	start = std::chrono::high_resolution_clock::now();
 	if (config.generate_raft) {
 		NEW_PLAN_MACHINE(plan_m, o);
 		raft_dummy_slice = new struct slice;
@@ -2951,10 +2953,12 @@ static int write_gcode(const char *path, struct object *o)
 		total_time += slice->layer_time / feed_rate_mult;
 		FREE_VECTOR(slice->moves);
 	}
-	fputs(" done\n", stderr);
+	fprintf(stderr, " done (%fs)\n",
+		(double) std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000000.0);
 
 	/* Write g-code to file */
 	fprintf(stderr, "write gcode to %s...", path);
+	start = std::chrono::high_resolution_clock::now();
 	write_gcode_string(config.start_gcode, f, false);
 	if (config.generate_raft) {
 		fputs("; raft\n", f);
@@ -2982,7 +2986,8 @@ static int write_gcode(const char *path, struct object *o)
 	fprintf(f, "; print time      = %.2d:%.2d:%02.0lf\n", (int) (total_time / 3600.0), (int) (total_time / 60.0) % 60, fmod(total_time, 60.0));
 	const long int bytes = ftell(f);
 	fclose(f);
-	fputs(" done\n", stderr);
+	fprintf(stderr, " done (%fs)\n",
+		(double) std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000000.0);
 
 	fprintf(stderr, "material length = %.4f\n", total_e / config.flow_multiplier);
 	fprintf(stderr, "material mass   = %.4f\n", mass);
