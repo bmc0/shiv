@@ -435,7 +435,7 @@ struct island {
 struct g_move {
 	ClipperLib::cInt x, y, z;
 	fl_t e, feed_rate;
-	bool scalable;
+	bool scalable, is_closed_path;
 };
 
 struct slice {
@@ -2168,7 +2168,7 @@ static void append_linear_travel(struct slice *slice, struct machine *m, Clipper
 		const fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
 		const fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
 		const fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
-		const struct g_move move = { x, y, z, 0.0, feed_rate, false };
+		const struct g_move move = { x, y, z, 0.0, feed_rate, false, false };
 		append_g_move(slice, move, len);
 		m->x = x;
 		m->y = y;
@@ -2182,9 +2182,19 @@ static void do_wipe(struct slice *slice, struct machine *m)
 		return;
 	ClipperLib::Path wipe_moves;
 	fl_t wiped_len = 0.0, x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y);
+	bool forward = false;
 	/* moves.rbegin() is the retract move and moves.rbegin() + 1 is the last kinematic move,
 	   so we want to start at moves.rbegin() + 2 */
-	for (auto it = slice->moves.rbegin() + 2; it != slice->moves.rend(); ++it) {
+	auto it_start = slice->moves.rbegin() + 2, it_end = slice->moves.rend();
+	if (it_start->is_closed_path) {
+		auto it = it_start;
+		while (it != it_end && it->is_closed_path)
+			++it;
+		it_start = it;
+		it_end = slice->moves.rbegin();  /* stop when we hit the retract move */
+		forward = true;
+	}
+	for (auto it = it_start; it != it_end; (forward) ? --it : ++it) {
 		const fl_t x1 = CINT_TO_FL_T(it->x), y1 = CINT_TO_FL_T(it->y);
 		if (x1 == x0 && y1 == y0)
 			break;  /* break at first non-kinematic move */
@@ -2210,7 +2220,7 @@ static void do_wipe(struct slice *slice, struct machine *m)
 static void do_retract(struct slice *slice, struct machine *m, bool should_wipe)
 {
 	if (!m->is_retracted) {
-		struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false };
+		struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false };
 		append_g_move(slice, retract_move, config.retract_len);
 		m->is_retracted = true;
 	}
@@ -2317,11 +2327,11 @@ static void move_to_island_exit(struct slice *slice, struct machine *m, ClipperL
 	}
 }
 
-static void linear_move(struct slice *slice, const struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel, fl_t retract_threshold)
+static void linear_move(struct slice *slice, const struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel, bool is_closed_path, fl_t retract_threshold)
 {
 	const fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
 	const fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
-	struct g_move move = { x, y, z, 0.0, feed_rate, scalable };
+	struct g_move move = { x, y, z, 0.0, feed_rate, scalable, (is_travel) ? false : is_closed_path };
 	const fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 	if (is_travel) {
 		if (m->force_retract)
@@ -2357,7 +2367,7 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 		if (z == m->z && m->is_retracted && !m->is_hopped && config.z_hop > 0.0) {
 			if (config.z_hop_angle == 90.0) {
 				move.z += FL_T_TO_CINT(config.z_hop);
-				struct g_move hop_move = { m->x, m->y, move.z, 0.0, config.travel_feed_rate, false };
+				struct g_move hop_move = { m->x, m->y, move.z, 0.0, config.travel_feed_rate, false, false };
 				append_g_move(slice, hop_move, config.z_hop);
 			}
 			else {
@@ -2372,7 +2382,7 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 				else {
 					struct g_move hop_move = {
 						FL_T_TO_CINT(x0 + hop_min_travel * (xv / norm)), FL_T_TO_CINT(y0 + hop_min_travel * (yv / norm)),
-						z + FL_T_TO_CINT(config.z_hop), 0.0, config.travel_feed_rate, false
+						z + FL_T_TO_CINT(config.z_hop), 0.0, config.travel_feed_rate, false, false
 					};
 					append_g_move(slice, hop_move, 0.0);  /* FIXME: len is not correct, but it doesn't matter currently */
 					move.z += FL_T_TO_CINT(config.z_hop);
@@ -2384,11 +2394,11 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 	else {
 		if (m->is_retracted) {
 			if (m->is_hopped) {
-				struct g_move unhop_move = { m->x, m->y, m->z, 0.0, config.travel_feed_rate, false };
+				struct g_move unhop_move = { m->x, m->y, m->z, 0.0, config.travel_feed_rate, false, false };
 				append_g_move(slice, unhop_move, config.z_hop);
 				m->is_hopped = false;
 			}
-			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false };
+			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false, false };
 			if (config.extra_restart_len < 0.0)
 				restart_move.e += config.extra_restart_len;
 			else
@@ -2398,7 +2408,7 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 		}
 		move.e = len * config.extrusion_area * config.flow_multiplier * flow_adjust / config.material_area;
 		if (extra_e_len != 0.0) {
-			struct g_move extra_e_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true };
+			struct g_move extra_e_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true, false };
 			append_g_move(slice, extra_e_move, fabs(extra_e_len));
 		}
 	}
@@ -2467,7 +2477,7 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 	if (start_idx != 0)
 		std::rotate(lp.begin(), lp.begin() + start_idx, lp.end());
 	lp.push_back(lp[0]);
-	linear_move(slice, island, m, lp[0].X, lp[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, config.extrusion_width * 2.0);
+	linear_move(slice, island, m, lp[0].X, lp[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, config.extrusion_width * 2.0);
 	if (config.shell_clip > 0.0 && path_len_is_greater_than(p, config.shell_clip * config.extrusion_width * 2.0))
 		total_clip += config.shell_clip * config.extrusion_width;
 	if (config.anchor && m->is_retracted && path_len_is_greater_than(p, total_clip + config.extrusion_width)) {
@@ -2479,13 +2489,13 @@ static void generate_closed_path_moves(const ClipperLib::Path &p, size_t start_i
 	ClipperLib::Path coast_path;
 	if (config.coast_len > 0.0 && path_len_is_greater_than(p, total_clip + config.coast_len * 2.0))
 		clip_path_from_end(lp, &coast_path, config.coast_len);
-	linear_move(slice, island, m, lp[1].X, lp[1].Y, z, anchor_e_len, feed_rate, 1.0, true, false, 0.0);
+	linear_move(slice, island, m, lp[1].X, lp[1].Y, z, anchor_e_len, feed_rate, 1.0, true, false, false, 0.0);
 	for (auto it = lp.begin() + 2; it != lp.end(); ++it)
-		linear_move(slice, island, m, it->X, it->Y, z, 0.0, feed_rate, 1.0, true, false, 0.0);
+		linear_move(slice, island, m, it->X, it->Y, z, 0.0, feed_rate, 1.0, true, false, true, 0.0);
 	m->is_retracted = true;  /* Make sure we don't retract */
 	m->is_hopped = true;     /* Make sure we don't hop */
 	for (const ClipperLib::IntPoint &point : coast_path)
-		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true, 0.0);
+		linear_move(slice, island, m, point.X, point.Y, z, 0.0, feed_rate, 1.0, true, true, false, 0.0);
 	m->is_retracted = false;
 	m->is_hopped = false;
 }
@@ -2530,10 +2540,10 @@ static void plan_support(struct slice *slice, ClipperLib::Paths &lines, struct m
 			}
 			bool connect = (!first && !cross_bound && best_dist < connect_threshold);
 			if (connect)
-				linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, 0.0);
+				linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, feed_rate, flow_adjust, true, false, false, 0.0);
 			else
-				linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, config.retract_threshold);
-			linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, 0.0);
+				linear_move(slice, NULL, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, false, config.retract_threshold);
+			linear_move(slice, NULL, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, false, 0.0);
 			first = false;
 		}
 		lines.erase(lines.begin() + best);
@@ -2618,13 +2628,13 @@ static void plan_infill_simple(ClipperLib::Paths &lines, struct slice *slice, st
 		ClipperLib::Path &p = lines[best];
 		if (flip_points)
 			std::swap(p[0], p[1]);
-		linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, config.retract_threshold);
+		linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, false, config.retract_threshold);
 		if (!m->is_retracted) {
 			const fl_t travel_dist = distance_to_point(p_start, p[0]) / config.scale_constant;
 			const fl_t extra_vol = (travel_dist <= config.sparse_restart_max_dist) ? travel_dist / config.sparse_restart_max_dist * config.sparse_restart_max_vol : config.sparse_restart_max_vol;
 			extra_e_len = extra_vol / config.material_area;
 		}
-		linear_move(slice, island, m, p[1].X, p[1].Y, z, extra_e_len, feed_rate, flow_adjust, true, false, 0.0);
+		linear_move(slice, island, m, p[1].X, p[1].Y, z, extra_e_len, feed_rate, flow_adjust, true, false, false, 0.0);
 		lines.erase(lines.begin() + best);
 	}
 }
@@ -2746,14 +2756,14 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 			if (!last_was_smoothed) {
 				/* move to line0 start */
 				if (needs_travel)
-					linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, SOLID_INFILL_RETRACT_THRESHOLD);
+					linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, SOLID_INFILL_RETRACT_THRESHOLD);
 				/* extrude to line0_midpoint */
-				linear_move(slice, island, m, line0_midpoint.X, line0_midpoint.Y, z, 0.0, feed_rate, 1.0, true, false, 0.0);
+				linear_move(slice, island, m, line0_midpoint.X, line0_midpoint.Y, z, 0.0, feed_rate, 1.0, true, false, false, 0.0);
 			}
 			/* extrude to line1_midpoint */
 			const fl_t extrude_ratio = (len_line0 + len_line1) / 2.0 / distance_to_point(line0_midpoint, line1_midpoint);
 			const fl_t scaled_feed_rate = (feed_rate / extrude_ratio < config.travel_feed_rate) ? feed_rate / extrude_ratio : config.travel_feed_rate;
-			linear_move(slice, island, m, line1_midpoint.X, line1_midpoint.Y, z, 0.0, scaled_feed_rate, extrude_ratio, true, false, 0.0);
+			linear_move(slice, island, m, line1_midpoint.X, line1_midpoint.Y, z, 0.0, scaled_feed_rate, extrude_ratio, true, false, false, 0.0);
 			last_was_smoothed = true;
 			needs_travel = false;
 		}
@@ -2772,26 +2782,26 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 			pt1.X = line1[0].X - llround(shortening_dist * config.scale_constant * (-xv1 / len_line1));
 			pt1.Y = line1[0].Y - llround(shortening_dist * config.scale_constant * (-yv1 / len_line1));
 			if (needs_travel)
-				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, SOLID_INFILL_RETRACT_THRESHOLD);
+				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, SOLID_INFILL_RETRACT_THRESHOLD);
 			/* extrude line0 */
-			linear_move(slice, island, m, pt0.X, pt0.Y, z, 0.0, feed_rate, 1.0, true, false, 0.0);
+			linear_move(slice, island, m, pt0.X, pt0.Y, z, 0.0, feed_rate, 1.0, true, false, false, 0.0);
 			/* extrude connection */
-			linear_move(slice, island, m, pt1.X, pt1.Y, z, 0.0, feed_rate, 1.0, true, false, 0.0);
+			linear_move(slice, island, m, pt1.X, pt1.Y, z, 0.0, feed_rate, 1.0, true, false, false, 0.0);
 			last_was_smoothed = false;
 			needs_travel = false;
 		}
 		else {
 			if (needs_travel)
-				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, SOLID_INFILL_RETRACT_THRESHOLD);
-			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, 0.0);
+				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, SOLID_INFILL_RETRACT_THRESHOLD);
+			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, false, 0.0);
 			last_was_smoothed = false;
 			needs_travel = true;
 		}
 		line0 = line1;
 	}
 	if (needs_travel)
-		linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, SOLID_INFILL_RETRACT_THRESHOLD);
-	linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, 0.0);
+		linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, SOLID_INFILL_RETRACT_THRESHOLD);
+	linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, false, 0.0);
 }
 
 static void plan_moves(struct object *o, struct slice *slice, ssize_t layer_num, struct machine *m)
