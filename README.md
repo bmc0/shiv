@@ -104,6 +104,8 @@ Setting                    | Default value | Description
 `retract_threshold`        |        `30.0` | Unconditional retraction threshold.
 `retract_after_shells`     |       `false` | Retract unconditionally after printing the last shell.
 `extra_restart_len`        |         `0.0` | Extra material length on restart.
+`sparse_restart_max_dist`  |         `0.0` | Travel distance required to reach `sparse_restart_max_vol` when doing non-retracted travel moves during sparse infill.
+`sparse_restart_max_vol`   |         `0.0` | Maximum extra restart volume for the above case.
 `z_hop`                    |         `0.0` | Raise the z axis by this amount after retracting when traveling.
 `z_hop_angle`              |        `15.0` | Ascent angle for z-hop.
 `cool_layer`               |           `2` | Turn on part cooling at this layer (numbered from zero). Set to `-1` to disable cooling.

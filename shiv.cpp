@@ -161,6 +161,8 @@ static struct {
 	fl_t retract_threshold        = 30.0;       /* Unconditional retraction threshold */
 	bool retract_after_shells     = false;      /* Retract unconditionally after printing the last shell */
 	fl_t extra_restart_len        = 0.0;        /* Extra material length on restart */
+	fl_t sparse_restart_max_dist  = 0.0;        /* Travel distance required to reach 'sparse_restart_max_vol' when doing non-retracted travel moves during sparse infill */
+	fl_t sparse_restart_max_vol   = 0.0;        /* Maximum extra restart volume for the above case */
 	fl_t z_hop                    = 0.0;        /* Raise the z axis by this amount after retracting when traveling */
 	fl_t z_hop_angle              = 15.0;       /* Ascent angle for z-hop */
 	int cool_layer                = 2;          /* Turn on part cooling at this layer */
@@ -310,6 +312,8 @@ static const struct setting settings[] = {
 	SETTING(retract_threshold,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(retract_after_shells,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(extra_restart_len,         SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
+	SETTING(sparse_restart_max_dist,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(sparse_restart_max_vol,    SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(z_hop,                     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(z_hop_angle,               SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       90.0     } }, false, true),
 	SETTING(cool_layer,                SETTING_TYPE_INT,            false, false, { .i = { -1,        INT_MAX  } }, true,  true),
@@ -2608,12 +2612,19 @@ static void plan_infill_simple(ClipperLib::Paths &lines, struct slice *slice, st
 {
 	while (!lines.empty()) {
 		bool flip_points;
+		fl_t extra_e_len = 0.0;
+		const ClipperLib::IntPoint p_start(m->x, m->y);
 		const size_t best = find_nearest_segment(lines, m->x, m->y, NULL, &flip_points);
 		ClipperLib::Path &p = lines[best];
 		if (flip_points)
 			std::swap(p[0], p[1]);
 		linear_move(slice, island, m, p[0].X, p[0].Y, z, 0.0, config.travel_feed_rate, flow_adjust, false, true, config.retract_threshold);
-		linear_move(slice, island, m, p[1].X, p[1].Y, z, 0.0, feed_rate, flow_adjust, true, false, 0.0);
+		if (!m->is_retracted) {
+			const fl_t travel_dist = distance_to_point(p_start, p[0]) / config.scale_constant;
+			const fl_t extra_vol = (travel_dist <= config.sparse_restart_max_dist) ? travel_dist / config.sparse_restart_max_dist * config.sparse_restart_max_vol : config.sparse_restart_max_vol;
+			extra_e_len = extra_vol / config.material_area;
+		}
+		linear_move(slice, island, m, p[1].X, p[1].Y, z, extra_e_len, feed_rate, flow_adjust, true, false, 0.0);
 		lines.erase(lines.begin() + best);
 	}
 }
