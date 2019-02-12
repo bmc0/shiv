@@ -113,7 +113,7 @@ struct at_layer_gcode {
 static struct {
 	fl_t layer_height             = 0.2;
 	fl_t tolerance                = 0.001;      /* Segment connection tolerance */
-	fl_t scale_constant           = 1000000.0;  /* Clipper uses integers, so we need to scale floating point values. Precision is 1/scale_constant units. Coordinates in the range `±4.6e+18/scale_constant` are accepted. */
+	fl_t scale_constant           = 1000000.0;  /* Clipper uses integers, so we need to scale floating point values. Precision is 1/scale_constant units. Coordinates in the range ±4.6e+18/scale_constant are accepted. */
 	fl_t coarseness               = 0.01;       /* Approximate output coarseness. Useful for simplifying high polygon count meshes. */
 	fl_t extrusion_width          = 0.45;       /* Constrained (solid infill) extrusion width */
 	fl_t edge_width;                            /* Unconstrained (edge) extrusion width (calculated from extrusion_width) */
@@ -159,6 +159,7 @@ static struct {
 	fl_t retract_speed            = 20.0;
 	fl_t restart_speed            = -1.0;       /* A negative value means a multiple of 'retract_speed' */
 	fl_t retract_threshold        = 30.0;       /* Unconditional retraction threshold */
+	fl_t solid_infill_retract_threshold = 5.0;  /* Retraction threshold when doing solid infill in units of extrusion_width */
 	bool retract_after_shells     = false;      /* Retract unconditionally after printing the last shell */
 	fl_t extra_restart_len        = 0.0;        /* Extra material length on restart */
 	fl_t sparse_restart_max_dist  = 0.0;        /* Travel distance required to reach 'sparse_restart_max_vol' when doing non-retracted travel moves during sparse infill */
@@ -310,6 +311,7 @@ static const struct setting settings[] = {
 	SETTING(retract_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { 0.0,       FL_T_INF } }, false, false),
 	SETTING(restart_speed,             SETTING_TYPE_FL_T,           false, true,  { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(retract_threshold,         SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(solid_infill_retract_threshold, SETTING_TYPE_FL_T,      false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(retract_after_shells,      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(extra_restart_len,         SETTING_TYPE_FL_T,           false, false, { .f = { -FL_T_INF, FL_T_INF } }, false, false),
 	SETTING(sparse_restart_max_dist,   SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
@@ -2685,7 +2687,6 @@ static size_t find_next_solid_infill_segment(const ClipperLib::Paths &p, Clipper
 	return best;
 }
 
-#define SOLID_INFILL_RETRACT_THRESHOLD (config.extrusion_width * 5.0)
 static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *slice, struct island *island, struct machine *m, fl_t feed_rate, ClipperLib::cInt z)
 {
 	if (lines.empty())
@@ -2756,7 +2757,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 			if (!last_was_smoothed) {
 				/* move to line0 start */
 				if (needs_travel)
-					linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, SOLID_INFILL_RETRACT_THRESHOLD);
+					linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, config.solid_infill_retract_threshold * config.extrusion_width);
 				/* extrude to line0_midpoint */
 				linear_move(slice, island, m, line0_midpoint.X, line0_midpoint.Y, z, 0.0, feed_rate, 1.0, true, false, false, 0.0);
 			}
@@ -2782,7 +2783,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 			pt1.X = line1[0].X - llround(shortening_dist * config.scale_constant * (-xv1 / len_line1));
 			pt1.Y = line1[0].Y - llround(shortening_dist * config.scale_constant * (-yv1 / len_line1));
 			if (needs_travel)
-				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, SOLID_INFILL_RETRACT_THRESHOLD);
+				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, config.solid_infill_retract_threshold * config.extrusion_width);
 			/* extrude line0 */
 			linear_move(slice, island, m, pt0.X, pt0.Y, z, 0.0, feed_rate, 1.0, true, false, false, 0.0);
 			/* extrude connection */
@@ -2792,7 +2793,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 		}
 		else {
 			if (needs_travel)
-				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, SOLID_INFILL_RETRACT_THRESHOLD);
+				linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, config.solid_infill_retract_threshold * config.extrusion_width);
 			linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, false, 0.0);
 			last_was_smoothed = false;
 			needs_travel = true;
@@ -2800,7 +2801,7 @@ static void plan_smoothed_solid_infill(ClipperLib::Paths &lines, struct slice *s
 		line0 = line1;
 	}
 	if (needs_travel)
-		linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, SOLID_INFILL_RETRACT_THRESHOLD);
+		linear_move(slice, island, m, line0[0].X, line0[0].Y, z, 0.0, config.travel_feed_rate, 1.0, false, true, false, config.solid_infill_retract_threshold * config.extrusion_width);
 	linear_move(slice, island, m, line0[1].X, line0[1].Y, z, 0.0, feed_rate, 1.0, true, false, false, 0.0);
 }
 
@@ -3168,6 +3169,7 @@ int main(int argc, char *argv[])
 	config.iron_feed_rate = GET_FEED_RATE(config.iron_feed_rate, config.solid_infill_feed_rate);
 	config.travel_feed_rate = GET_FEED_RATE(config.travel_feed_rate, config.feed_rate);
 	config.restart_speed = GET_FEED_RATE(config.restart_speed, config.retract_speed);
+	config.solid_infill_retract_threshold = MINIMUM(config.solid_infill_retract_threshold, config.retract_threshold / config.extrusion_width);
 
 	if (print_config) {
 		fprintf(stderr, "configuration:\n");

@@ -102,6 +102,7 @@ Setting                    | Default value | Description
 `retract_speed`            |        `20.0` | Retraction speed.
 `restart_speed`            |        `-1.0` | Restart speed. A negative value means a multiple of `retract_speed`.
 `retract_threshold`        |        `30.0` | Unconditional retraction threshold.
+`solid_infill_retract_threshold` |   `5.0` | Retraction threshold when doing solid infill in units of `extrusion_width`.
 `retract_after_shells`     |       `false` | Retract unconditionally after printing the last shell.
 `extra_restart_len`        |         `0.0` | Extra material length on restart.
 `sparse_restart_max_dist`  |         `0.0` | Travel distance required to reach `sparse_restart_max_vol` when doing non-retracted travel moves during sparse infill.
