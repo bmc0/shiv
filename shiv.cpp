@@ -108,7 +108,7 @@ struct at_layer_gcode {
 };
 
 /* default config */
-#define DEFAULT_COOL_ON_STR  "M106 S255"
+#define DEFAULT_COOL_ON_STR  "M106 S{cool_value}"
 #define DEFAULT_COOL_OFF_STR "M107"
 static struct {
 	fl_t layer_height             = 0.2;
@@ -171,6 +171,13 @@ static struct {
 	char *end_gcode               = NULL;
 	char *cool_on_gcode           = NULL;       /* Set in main() */
 	char *cool_off_gcode          = NULL;       /* Set in main() */
+	fl_t cool_min                 = 127.0;      /* Minimum cool value */
+	fl_t cool_max                 = 255.0;      /* Maximum cool value */
+	fl_t cool_min_time            = 60.0;       /* If layer time >= cool_min_time, the cool_min value will be used */
+	fl_t cool_max_time            = 10.0;       /* If layer time <= cool_max_time, the cool_max value will be used */
+	fl_t cool_off_time            = 0.0;        /* If layer time >= cool_off_time, cooling will be turned off. Set to zero to disable this feature. */
+	fl_t cool_value_float         = 0.0;        /* Cool value (floating point). Intended to be used in cool_on_gcode. */
+	int cool_value                = 0;          /* Cool value (integer). Intended to be used in cool_on_gcode. */
 	fl_t edge_overlap             = 0.5;        /* Allowable edge path overlap in units of extrusion_width */
 	bool comb                     = true;       /* Avoid crossing boundaries */
 	bool strict_shell_order       = false;      /* Always do insets in order within an island */
@@ -323,6 +330,13 @@ static const struct setting settings[] = {
 	SETTING(end_gcode,                 SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(cool_on_gcode,             SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(cool_off_gcode,            SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
+	SETTING(cool_min,                  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(cool_max,                  SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(cool_min_time,             SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(cool_max_time,             SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(cool_off_time,             SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
+	SETTING(cool_value_float,          SETTING_TYPE_FL_T,           true,  false, { .f = { 0.0,       0.0      } }, false, false),
+	SETTING(cool_value,                SETTING_TYPE_INT,            true,  false, { .i = { 0,         0        } }, false, false),
 	SETTING(edge_overlap,              SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       1.0      } }, true,  true),
 	SETTING(comb,                      SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(strict_shell_order,        SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
@@ -2964,6 +2978,7 @@ static int write_gcode(const char *path, struct object *o)
 		fl_t layer_time = slice->layer_time / feed_rate_mult;
 		if (layer_time > 0.0 && layer_time < config.min_layer_time)
 			feed_rate_mult *= layer_time / config.min_layer_time;
+		slice->layer_time = slice->layer_time / feed_rate_mult;
 		bool is_first_move = true;
 		struct machine export_m = {};
 		/* Convert g_moves to gcode */
@@ -2972,7 +2987,7 @@ static int write_gcode(const char *path, struct object *o)
 			is_first_move = false;
 		}
 		total_e += export_m.e;
-		total_time += slice->layer_time / feed_rate_mult;
+		total_time += slice->layer_time;
 		FREE_VECTOR(slice->moves);
 	}
 	fprintf(stderr, " done (%fs)\n",
@@ -2989,12 +3004,29 @@ static int write_gcode(const char *path, struct object *o)
 	}
 	for (ssize_t i = 0; i < o->n_slices; ++i) {
 		struct slice *slice = &o->slices[i];
-		fprintf(f, "; layer %zd (z = %f)\n", i, ((fl_t) i) * config.layer_height + config.layer_height + config.object_z_extra);
+		fprintf(f, "; layer %zd (z = %f; t = %f)\n", i, ((fl_t) i) * config.layer_height + config.layer_height + config.object_z_extra, slice->layer_time);
 		for (struct at_layer_gcode &g : config.at_layer)
 			if (g.layer == i)
 				write_gcode_string(g.value, f, false);
-		if (i == config.cool_layer)
-			write_gcode_string(config.cool_on_gcode, f, false);
+		if (i >= config.cool_layer) {
+			if (config.cool_off_time > 0.0 && slice->layer_time >= config.cool_off_time) {
+				write_gcode_string(config.cool_off_gcode, f, false);
+			}
+			else {
+				fl_t cool_value = 0.0;
+				if (config.cool_min_time - config.cool_max_time == 0.0)
+					cool_value = config.cool_max;
+				else if (slice->layer_time >= config.cool_min_time)
+					cool_value = config.cool_min;
+				else if (slice->layer_time <= config.cool_max_time)
+					cool_value = config.cool_max;
+				else  /* use linear interpolation */
+					cool_value = config.cool_max + (slice->layer_time - config.cool_max_time) * (config.cool_min - config.cool_max) / (config.cool_min_time - config.cool_max_time);
+				config.cool_value = lround(cool_value);
+				config.cool_value_float = cool_value;
+				write_gcode_string(config.cool_on_gcode, f, false);
+			}
+		}
 		fputs(slice->gcode.str().c_str(), f);
 		FREE_VECTOR(slice->gcode);
 		fputs("G92 E0\n", f);

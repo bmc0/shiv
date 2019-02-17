@@ -112,8 +112,13 @@ Setting                    | Default value | Description
 `cool_layer`               |           `2` | Turn on part cooling at this layer (numbered from zero). Set to `-1` to disable cooling.
 `start_gcode`              |        `None` | Prepend this G-code to beginning of the output file.
 `end_gcode`                |        `None` | Append this G-code to the end of the output file.
-`cool_on_gcode`            |   `M106 S255` | G-code to turn on cooling.
+`cool_on_gcode`            |`M106 S{cool_value}` | G-code to turn on cooling.
 `cool_off_gcode`           |        `M107` | G-code to turn off cooling.
+`cool_min`                 |       `127.0` | Minimum cool value.
+`cool_max`                 |       `255.0` | Maximum cool value.
+`cool_min_time`            |        `60.0` | If layer time >= `cool_min_time`, the `cool_min` value will be used.
+`cool_max_time`            |        `10.0` | If layer time <= `cool_max_time`, the `cool_max` value will be used.
+`cool_off_time`            |         `0.0` | If layer time >= `cool_off_time`, cooling will be turned off. Set to zero to disable this feature.
 `edge_overlap`             |         `0.5` | Allowable edge path overlap in units of `extrusion_width`.
 `comb`                     |        `true` | Avoid crossing boundaries.
 `strict_shell_order`       |       `false` | Always do insets in order within an island.
