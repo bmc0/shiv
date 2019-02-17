@@ -449,8 +449,8 @@ struct island {
 };
 
 struct g_move {
-	ClipperLib::cInt x, y, z;
-	fl_t e, feed_rate;
+	ClipperLib::cInt x, y, z;  /* x, y, and z are in scaled units */
+	fl_t e, feed_rate, len;    /* e, feed_rate, and len are in unscaled units */
 	bool scalable, is_closed_path;
 };
 
@@ -2107,10 +2107,10 @@ static size_t find_nearest_segment(const ClipperLib::Paths &p, ClipperLib::cInt 
 	return best;
 }
 
-static void append_g_move(struct slice *slice, const struct g_move &move, fl_t len)
+static void append_g_move(struct slice *slice, const struct g_move &move)
 {
 	/* FIXME: should probably take acceleration into account... */
-	slice->layer_time += len / move.feed_rate;
+	slice->layer_time += move.len / move.feed_rate;
 	slice->moves.push_back(move);
 }
 
@@ -2184,8 +2184,8 @@ static void append_linear_travel(struct slice *slice, struct machine *m, Clipper
 		const fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
 		const fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
 		const fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
-		const struct g_move move = { x, y, z, 0.0, feed_rate, false, false };
-		append_g_move(slice, move, len);
+		const struct g_move move = { x, y, z, 0.0, feed_rate, len, false, false };
+		append_g_move(slice, move);
 		m->x = x;
 		m->y = y;
 		m->z = z;
@@ -2236,8 +2236,8 @@ static void do_wipe(struct slice *slice, struct machine *m)
 static void do_retract(struct slice *slice, struct machine *m, bool should_wipe)
 {
 	if (!m->is_retracted) {
-		struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, false, false };
-		append_g_move(slice, retract_move, config.retract_len);
+		struct g_move retract_move = { m->x, m->y, m->z, -config.retract_len, config.retract_speed, config.retract_len, false, false };
+		append_g_move(slice, retract_move);
 		m->is_retracted = true;
 	}
 	m->force_retract = false;
@@ -2346,9 +2346,12 @@ static void move_to_island_exit(struct slice *slice, struct machine *m, ClipperL
 static void linear_move(struct slice *slice, const struct island *island, struct machine *m, ClipperLib::cInt x, ClipperLib::cInt y, ClipperLib::cInt z, fl_t extra_e_len, fl_t feed_rate, fl_t flow_adjust, bool scalable, bool is_travel, bool is_closed_path, fl_t retract_threshold)
 {
 	const fl_t f_x = CINT_TO_FL_T(x), f_y = CINT_TO_FL_T(y), f_z = CINT_TO_FL_T(z);
-	const fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
-	struct g_move move = { x, y, z, 0.0, feed_rate, scalable, (is_travel) ? false : is_closed_path };
-	const fl_t len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
+	fl_t f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y), f_mz = CINT_TO_FL_T(m->z);
+	struct g_move move = {
+		x, y, z, 0.0, feed_rate,
+		sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z)),
+		scalable, (is_travel) ? false : is_closed_path
+	};
 	if (is_travel) {
 		if (m->force_retract)
 			do_retract(slice, m, true);
@@ -2373,34 +2376,38 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 		}
 		else if (!m->is_retracted
 			&& (slice->last_boundaries.size() > 0
-				|| len > retract_threshold
+				|| move.len > retract_threshold
 				|| (island && crosses_boundary(m, island->boundaries, x, y) >= 0)
-				|| (island && len > config.extrusion_width * 2.0 && crosses_exposed_surface(island, m->x, m->y, x, y)))) {
+				|| (island && move.len > config.extrusion_width * 2.0 && crosses_exposed_surface(island, m->x, m->y, x, y)))) {
 			do_retract(slice, m, true);
 		}
+		f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y);  /* m->{x,y} will change if a wipe happened. m->z will not change */
+		move.len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 		/* FIXME: hopping will only work correctly if there is only a single travel
 		   move between extrusion moves. This should always be the case currently. */
 		if (z == m->z && m->is_retracted && !m->is_hopped && config.z_hop > 0.0) {
 			if (config.z_hop_angle == 90.0) {
 				move.z += FL_T_TO_CINT(config.z_hop);
-				struct g_move hop_move = { m->x, m->y, move.z, 0.0, config.travel_feed_rate, false, false };
-				append_g_move(slice, hop_move, config.z_hop);
+				struct g_move hop_move = { m->x, m->y, move.z, 0.0, config.travel_feed_rate, config.z_hop, false, false };
+				append_g_move(slice, hop_move);
 			}
 			else {
-				const fl_t hop_angle_deg = config.z_hop_angle / 180.0 * M_PI;
-				const fl_t hop_min_travel = config.z_hop / tan(hop_angle_deg);
-				const fl_t x0 = CINT_TO_FL_T(m->x), y0 = CINT_TO_FL_T(m->y);  /* m->{x,y} might have changed because of wiping */
-				const fl_t xv = f_x - x0, yv = f_y - y0;
+				const fl_t hop_angle_rad = config.z_hop_angle / 180.0 * M_PI;
+				const fl_t hop_min_travel = config.z_hop / tan(hop_angle_rad);
+				const fl_t xv = f_x - f_mx, yv = f_y - f_my;
 				const fl_t norm = sqrt(xv * xv + yv * yv);
 				if (norm <= hop_min_travel) {
-					move.z += FL_T_TO_CINT(tan(hop_angle_deg) * norm);
+					move.z += FL_T_TO_CINT(tan(hop_angle_rad) * norm);
 				}
 				else {
+					const fl_t x1 = f_mx + hop_min_travel * (xv / norm), y1 = f_my + hop_min_travel * (yv / norm), z1 = f_mz + config.z_hop;
 					struct g_move hop_move = {
-						FL_T_TO_CINT(x0 + hop_min_travel * (xv / norm)), FL_T_TO_CINT(y0 + hop_min_travel * (yv / norm)),
-						z + FL_T_TO_CINT(config.z_hop), 0.0, config.travel_feed_rate, false, false
+						FL_T_TO_CINT(x1), FL_T_TO_CINT(y1), FL_T_TO_CINT(z1),
+						0.0, config.travel_feed_rate, 0.0, false, false
 					};
-					append_g_move(slice, hop_move, 0.0);  /* FIXME: len is not correct, but it doesn't matter currently */
+					hop_move.len = sqrt((x1 - f_mx) * (x1 - f_mx) + (y1 - f_my) * (y1 - f_my) + (z1 - f_mz) * (z1 - f_mz));
+					append_g_move(slice, hop_move);
+					move.len -= sqrt((x1 - f_mx) * (x1 - f_mx) + (y1 - f_my) * (y1 - f_my));
 					move.z += FL_T_TO_CINT(config.z_hop);
 				}
 			}
@@ -2410,26 +2417,28 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 	else {
 		if (m->is_retracted) {
 			if (m->is_hopped) {
-				struct g_move unhop_move = { m->x, m->y, m->z, 0.0, config.travel_feed_rate, false, false };
-				append_g_move(slice, unhop_move, config.z_hop);
+				/* FIXME: len is technically not correct, but the error is very small in most cases */
+				struct g_move unhop_move = { m->x, m->y, m->z, 0.0, config.travel_feed_rate, config.z_hop, false, false };
+				append_g_move(slice, unhop_move);
 				m->is_hopped = false;
 			}
-			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, false, false };
+			struct g_move restart_move = { m->x, m->y, m->z, config.retract_len, config.restart_speed, 0.0, false, false };
 			if (config.extra_restart_len < 0.0)
 				restart_move.e += config.extra_restart_len;
 			else
 				extra_e_len += config.extra_restart_len;
-			append_g_move(slice, restart_move, restart_move.e);
+			restart_move.len = restart_move.e;
+			append_g_move(slice, restart_move);
 			m->is_retracted = false;
 		}
-		move.e = len * config.extrusion_area * config.flow_multiplier * flow_adjust / config.material_area;
+		move.e = move.len * config.extrusion_area * config.flow_multiplier * flow_adjust / config.material_area;
 		if (extra_e_len != 0.0) {
-			struct g_move extra_e_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, true, false };
-			append_g_move(slice, extra_e_move, fabs(extra_e_len));
+			struct g_move extra_e_move = { m->x, m->y, m->z, extra_e_len, feed_rate * config.extrusion_area / config.material_area, fabs(extra_e_len), true, false };
+			append_g_move(slice, extra_e_move);
 		}
 	}
 	if (x != m->x || y != m->y || z != m->z || move.e != 0.0) {
-		append_g_move(slice, move, len);
+		append_g_move(slice, move);
 		m->x = x;
 		m->y = y;
 		m->z = z;
@@ -2889,21 +2898,13 @@ static void plan_raft(struct object *o, struct slice *slice, struct machine *m)
 	m->force_retract = true;
 }
 
-static void write_gcode_move(std::ostringstream &ss, const struct g_move *move, struct machine *m, fl_t feed_rate_mult, bool force_xyz)
+static void write_gcode_move(std::ostringstream &ss, const struct g_move *move, struct machine *m, bool force_xyz)
 {
-	fl_t feed_rate = move->feed_rate;
-	if (move->scalable) {
-		feed_rate *= feed_rate_mult;
-		const fl_t min_feed_rate = (move->e > 0.0 && move->x == m->x && move->y == m->y && move->z == m->z)  /* is a scalable e-only move */
-			? config.min_feed_rate * config.extrusion_area / config.material_area : config.min_feed_rate;
-		if (feed_rate < min_feed_rate)
-			feed_rate = min_feed_rate;
-	}
 	ss << std::fixed << std::setprecision(3);
 	if (move->e == 0.0 && move->z != m->z && config.separate_z_travel) {
 		ss << "G1 Z" << CINT_TO_FL_T(move->z);
-		if (feed_rate != m->feed_rate)
-			ss << " F" << ((feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
+		if (move->feed_rate != m->feed_rate)
+			ss << " F" << ((move->feed_rate * 60.0 <= 1.0) ? 1 : lround(move->feed_rate * 60.0));
 		ss << '\n';
 		m->z = move->z;
 	}
@@ -2921,14 +2922,34 @@ static void write_gcode_move(std::ostringstream &ss, const struct g_move *move, 
 			ss << " Z" << CINT_TO_FL_T(move->z);
 		if (e_changed)
 			ss << " E" << std::setprecision(5) << (m->e + move->e) << std::setprecision(3);
-		if (feed_rate != m->feed_rate)
-			ss << " F" << ((feed_rate * 60.0 <= 1.0) ? 1 : lround(feed_rate * 60.0));
+		if (move->feed_rate != m->feed_rate)
+			ss << " F" << ((move->feed_rate * 60.0 <= 1.0) ? 1 : lround(move->feed_rate * 60.0));
 		ss << '\n';
 		m->x = move->x;
 		m->y = move->y;
 		m->z = move->z;
 		m->e += move->e;
-		m->feed_rate = feed_rate;
+		m->feed_rate = move->feed_rate;
+	}
+}
+
+static void apply_feed_rate_mult(struct slice *slice, fl_t feed_rate_mult)
+{
+	if (feed_rate_mult == 1.0)
+		return;
+	slice->layer_time = 0.0;
+	ClipperLib::cInt prev_x = 0, prev_y = 0, prev_z = 0;
+	for (struct g_move &move : slice->moves) {
+		if (move.scalable) {
+			/* Note: first move will *always* be a travel move */
+			const fl_t min_feed_rate = (move.e > 0.0 && move.x == prev_x && move.y == prev_y && move.z == prev_z)  /* is a scalable e-only move */
+				? config.min_feed_rate * config.extrusion_area / config.material_area : config.min_feed_rate;
+			move.feed_rate = MAXIMUM(move.feed_rate * feed_rate_mult, min_feed_rate);
+		}
+		slice->layer_time += move.len / move.feed_rate;
+		prev_x = move.x;
+		prev_y = move.y;
+		prev_z = move.z;
 	}
 }
 
@@ -2959,7 +2980,7 @@ static int write_gcode(const char *path, struct object *o)
 		struct machine export_m = {};
 		/* Convert g_moves to gcode */
 		for (const struct g_move &move : raft_dummy_slice->moves) {
-			write_gcode_move(raft_dummy_slice->gcode, &move, &export_m, 1.0, is_first_move);
+			write_gcode_move(raft_dummy_slice->gcode, &move, &export_m, is_first_move);
 			is_first_move = false;
 		}
 		total_e += export_m.e;
@@ -2967,23 +2988,40 @@ static int write_gcode(const char *path, struct object *o)
 		FREE_VECTOR(raft_dummy_slice->moves);
 	}
 #ifdef _OPENMP
+	#pragma omp parallel for schedule(dynamic)
+#endif
+	for (ssize_t i = 0; i < o->n_slices; ++i) {
+		struct slice *slice = &o->slices[i];
+		NEW_PLAN_MACHINE(plan_m, o);  /* Note: first move len on each layer will be wrong because starting position is unknown at this time */
+		plan_moves(o, slice, i, &plan_m);
+		do_retract(slice, &plan_m, true);
+	}
+#ifdef _OPENMP
 	#pragma omp parallel for schedule(dynamic) reduction(+:total_e,total_time)
 #endif
 	for (ssize_t i = 0; i < o->n_slices; ++i) {
 		struct slice *slice = &o->slices[i];
-		fl_t feed_rate_mult = (i == 0) ? config.first_layer_mult : 1.0;
-		NEW_PLAN_MACHINE(plan_m, o);
-		plan_moves(o, slice, i, &plan_m);
-		do_retract(slice, &plan_m, true);
-		fl_t layer_time = slice->layer_time / feed_rate_mult;
-		if (layer_time > 0.0 && layer_time < config.min_layer_time)
-			feed_rate_mult *= layer_time / config.min_layer_time;
-		slice->layer_time = slice->layer_time / feed_rate_mult;
+		if (i == 0)
+			apply_feed_rate_mult(slice, config.first_layer_mult);
+		else {
+			/* We now know where the previous layer ends, so recalculate the move length and layer time */
+			const struct slice *prev_slice = &o->slices[i - 1];
+			if (slice->moves.size() > 0 && prev_slice->moves.size() > 0) {
+				const struct g_move &m0 = prev_slice->moves[prev_slice->moves.size() - 1];
+				struct g_move &m1 = slice->moves[0];
+				slice->layer_time -= m1.len / m1.feed_rate;
+				const fl_t xv = CINT_TO_FL_T(m1.x - m0.x), yv = CINT_TO_FL_T(m1.y - m0.y), zv = CINT_TO_FL_T(m1.z - m0.z);
+				m1.len = sqrt(xv * xv + yv * yv + zv * zv);
+				slice->layer_time += m1.len / m1.feed_rate;
+			}
+		}
+		if (slice->layer_time > 0.0 && slice->layer_time < config.min_layer_time)
+			apply_feed_rate_mult(slice, slice->layer_time / config.min_layer_time);
 		bool is_first_move = true;
 		struct machine export_m = {};
 		/* Convert g_moves to gcode */
 		for (const struct g_move &move : slice->moves) {
-			write_gcode_move(slice->gcode, &move, &export_m, feed_rate_mult, is_first_move);
+			write_gcode_move(slice->gcode, &move, &export_m, is_first_move);
 			is_first_move = false;
 		}
 		total_e += export_m.e;
