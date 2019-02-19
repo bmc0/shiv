@@ -2685,17 +2685,15 @@ static size_t find_next_solid_infill_segment(const ClipperLib::Paths &p, Clipper
 		const fl_t pt_dist0 = distance_to_point(line0[1], line1[0]);
 		const fl_t pt_dist1 = distance_to_point(line0[1], line1[1]);
 		const bool is_adjacent = scaled_p_dist < config.extrusion_width + adjacent_dist_fudge && scaled_p_dist > config.extrusion_width - adjacent_dist_fudge && scaled_min_dist < config.extrusion_width * 2.0;
-		if (pt_dist0 > pt_dist1)
-			std::swap(line1[0], line1[1]);
 		const bool is_opposite_dir = ((line0[0].X < line0[1].X) != (line1[0].X < line1[1].X)) || ((line0[0].Y < line0[1].Y) != (line1[0].Y < line1[1].Y));
 		fl_t adj_dist = l_dist1;
-		if (!is_opposite_dir)
+		if (is_opposite_dir != (pt_dist1 > pt_dist0))
 			adj_dist *= 2.0;
 		if (!is_adjacent)
-			adj_dist *= 2.0;
+			adj_dist *= 4.0;
 		if (adj_dist < best_adj_dist) {
 			best_adj_dist = adj_dist;
-			best_flip = (is_adjacent && !is_opposite_dir) || (pt_dist0 > pt_dist1);
+			best_flip = (is_adjacent) ? (is_opposite_dir) ? pt_dist0 > pt_dist1 * 4.0 : !(pt_dist1 > pt_dist0 * 4.0) : pt_dist1 < pt_dist0;
 			best_dist = (best_flip) ? pt_dist1 : pt_dist0;
 			best_is_adjacent = is_adjacent;
 			best = i;
