@@ -37,6 +37,7 @@
 
 #define SIMPLIFY_EPSILON (config.coarseness * config.scale_constant)
 #define SHIV_DEBUG 1
+#define MT_FIND_SEGMENTS 0  /* FIXME: I sometimes get incorrect results with this enabled... Haven't figured out why yet. */
 
 #ifdef SHIV_FL_T_IS_FLOAT
 #pragma message("fl_t defined as float")
@@ -457,11 +458,14 @@ struct g_move {
 struct slice {
 #ifdef _OPENMP
 	omp_lock_t lock;
+#endif
+#if defined(_OPENMP) && MT_FIND_SEGMENTS
 	volatile ssize_t n_seg, s_len;
+	struct segment * volatile s;
 #else
 	ssize_t n_seg, s_len;
-#endif
 	struct segment *s;
+#endif
 	std::vector<struct island> islands;
 	std::vector<struct g_move> moves;
 	ClipperLib::PolyTree layer_support_map;
@@ -942,7 +946,7 @@ static void find_segments(struct slice *slices, const struct triangle *t)
 
 	for (i = start; i < end; ++i) {
 		z = ((fl_t) i) * config.layer_height + config.layer_height / 2;
-	#ifdef _OPENMP
+	#if defined(_OPENMP) && MT_FIND_SEGMENTS
 		omp_set_lock(&slices[i].lock);
 	#endif
 		if (slices[i].n_seg >= slices[i].s_len) {
@@ -981,7 +985,7 @@ static void find_segments(struct slice *slices, const struct triangle *t)
 		if (s->x[0] != s->x[1] || s->y[0] != s->y[1]) /* Ignore zero-length segments */
 			++slices[i].n_seg;
 		invalid_segment:
-	#ifdef _OPENMP
+	#if defined(_OPENMP) && MT_FIND_SEGMENTS
 		omp_unset_lock(&slices[i].lock);
 	#else
 		;
@@ -1847,6 +1851,8 @@ static void slice_object(struct object *o)
 #ifdef _OPENMP
 	for (i = 0; i < o->n_slices; ++i)
 		omp_init_lock(&o->slices[i].lock);
+#endif
+#if defined(_OPENMP) && MT_FIND_SEGMENTS
 	#pragma omp parallel for
 #endif
 	for (i = 0; i < o->n; ++i)
@@ -2971,7 +2977,7 @@ static int write_gcode(const char *path, struct object *o)
 	start = std::chrono::high_resolution_clock::now();
 	if (config.generate_raft) {
 		NEW_PLAN_MACHINE(plan_m, o);
-		raft_dummy_slice = new struct slice;
+		raft_dummy_slice = new struct slice();
 		plan_raft(o, raft_dummy_slice, &plan_m);
 		do_retract(raft_dummy_slice, &plan_m, true);
 		bool is_first_move = true;
