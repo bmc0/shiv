@@ -37,7 +37,6 @@
 
 #define SIMPLIFY_EPSILON (config.coarseness * config.scale_constant)
 #define SHIV_DEBUG 1
-#define MT_FIND_SEGMENTS 0  /* FIXME: I sometimes get incorrect results with this enabled... Haven't figured out why yet. */
 
 #ifdef SHIV_FL_T_IS_FLOAT
 #pragma message("fl_t defined as float")
@@ -456,19 +455,12 @@ struct g_move {
 };
 
 struct slice {
-#ifdef _OPENMP
-	omp_lock_t lock;
-#endif
-#if defined(_OPENMP) && MT_FIND_SEGMENTS
-	volatile ssize_t n_seg, s_len;
-	struct segment * volatile s;
-#else
 	ssize_t n_seg, s_len;
 	struct segment *s;
-#endif
 	std::vector<struct island> islands;
 	std::vector<struct g_move> moves;
 	ClipperLib::PolyTree layer_support_map;
+	ClipperLib::Paths *support_map_clipped_paths;
 	ClipperLib::Paths support_map;
 	ClipperLib::Paths support_boundaries;
 	ClipperLib::Paths support_interface_clip;
@@ -946,9 +938,6 @@ static void find_segments(struct slice *slices, const struct triangle *t)
 
 	for (i = start; i < end; ++i) {
 		z = ((fl_t) i) * config.layer_height + config.layer_height / 2;
-	#if defined(_OPENMP) && MT_FIND_SEGMENTS
-		omp_set_lock(&slices[i].lock);
-	#endif
 		if (slices[i].n_seg >= slices[i].s_len) {
 			if (slices[i].s_len == 0) {
 				slices[i].s_len = 1024;
@@ -981,15 +970,9 @@ static void find_segments(struct slice *slices, const struct triangle *t)
 		else if (t->v[2].z > z && t->v[1].z < z && t->v[0].z < z)
 			project2d(s, &t->v[2], &t->v[0], &t->v[1], z);
 		else
-			goto invalid_segment;
+			continue;
 		if (s->x[0] != s->x[1] || s->y[0] != s->y[1]) /* Ignore zero-length segments */
 			++slices[i].n_seg;
-		invalid_segment:
-	#if defined(_OPENMP) && MT_FIND_SEGMENTS
-		omp_unset_lock(&slices[i].lock);
-	#else
-		;
-	#endif
 	}
 }
 
@@ -1663,42 +1646,38 @@ static void generate_support_boundaries(struct slice *slice)
 
 static void extend_support_downward(struct object *o, const ClipperLib::PolyNode *n, ssize_t slice_index)
 {
-	ssize_t k;
-	ClipperLib::Paths p;
+	ClipperLib::Paths p, tmp;
+	struct slice *slice = &o->slices[slice_index];
 	p.push_back(n->Contour);
 	for (const ClipperLib::PolyNode *c : n->Childs)
 		p.push_back(c->Contour);
-	ClipperLib::Paths *clipped_paths = new ClipperLib::Paths[slice_index + 1]();
-	for (k = slice_index; k >= 0; --k) {
+	for (ssize_t k = slice_index; k >= 0; --k) {
 		ClipperLib::Clipper c;
 		c.AddPaths(p, ClipperLib::ptSubject, true);
 		for (ssize_t i = (k >= config.support_vert_margin) ? -config.support_vert_margin : -k; k + i <= o->n_slices && i <= config.support_vert_margin; ++i)
 			c.AddPaths(o->slices[k + i].support_boundaries, ClipperLib::ptClip, true);
-		c.Execute(ClipperLib::ctDifference, clipped_paths[k], ClipperLib::pftNonZero, ClipperLib::pftNonZero);
-		if (clipped_paths[k].size() == 0)
+		c.Execute(ClipperLib::ctDifference, tmp, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+		slice->support_map_clipped_paths[k].insert(slice->support_map_clipped_paths[k].end(), tmp.begin(), tmp.end());
+		if (tmp.size() == 0)
 			break;
 	}
-	if (config.support_everywhere || k == -1) {
-		for (++k; k <= slice_index; ++k) {
-		#ifdef _OPENMP
-			omp_set_lock(&o->slices[k].lock);
-		#endif
-			o->slices[k].support_map.insert(o->slices[k].support_map.end(), clipped_paths[k].begin(), clipped_paths[k].end());
-		#ifdef _OPENMP
-			omp_unset_lock(&o->slices[k].lock);
-		#endif
-		}
-	}
-	delete[] clipped_paths;
 }
 
-static void generate_support_maps(struct object *o, const ClipperLib::PolyNode *n, ssize_t slice_index)
+static void generate_support_map_clipped_paths(struct object *o, const ClipperLib::PolyNode *n, ssize_t slice_index)
 {
 	for (const ClipperLib::PolyNode *c : n->Childs) {
 		extend_support_downward(o, c, slice_index);
 		for (const ClipperLib::PolyNode *cc : c->Childs)
-			generate_support_maps(o, cc, slice_index);
+			generate_support_map_clipped_paths(o, cc, slice_index);
 	}
+}
+
+static void generate_support_maps(struct object *o, ssize_t slice_index)
+{
+	struct slice *slice = &o->slices[slice_index];
+	if (config.support_everywhere || slice->support_map_clipped_paths[0].size() > 0)
+		for (ssize_t k = 0; k <= slice_index; ++k)
+			o->slices[k].support_map.insert(o->slices[k].support_map.end(), slice->support_map_clipped_paths[k].begin(), slice->support_map_clipped_paths[k].end());
 }
 
 static void union_support_maps(struct slice *slice)
@@ -1848,13 +1827,6 @@ static void slice_object(struct object *o)
 
 	start = std::chrono::high_resolution_clock::now();
 	fputs("  find segments...", stderr);
-#ifdef _OPENMP
-	for (i = 0; i < o->n_slices; ++i)
-		omp_init_lock(&o->slices[i].lock);
-#endif
-#if defined(_OPENMP) && MT_FIND_SEGMENTS
-	#pragma omp parallel for
-#endif
 	for (i = 0; i < o->n; ++i)
 		find_segments(o->slices, &o->t[i]);
 	fputs(" done\n", stderr);
@@ -1895,8 +1867,13 @@ static void slice_object(struct object *o)
 		#pragma omp parallel for schedule(dynamic)
 	#endif
 		for (i = 0; i < o->n_slices; ++i) {
-			generate_support_maps(o, &o->slices[i].layer_support_map, i);
+			o->slices[i].support_map_clipped_paths = new ClipperLib::Paths[i + 1]();
+			generate_support_map_clipped_paths(o, &o->slices[i].layer_support_map, i);
 			o->slices[i].layer_support_map.Clear();
+		}
+		for (i = 0; i < o->n_slices; ++i) {
+			generate_support_maps(o, i);
+			delete[] o->slices[i].support_map_clipped_paths;
 		}
 	#ifdef _OPENMP
 		#pragma omp parallel for schedule(dynamic)
@@ -1946,10 +1923,6 @@ static void slice_object(struct object *o)
 			FREE_VECTOR(o->slices[i].support_map);
 		}
 	}
-#ifdef _OPENMP
-	for (i = 0; i < o->n_slices; ++i)
-		omp_destroy_lock(&o->slices[i].lock);
-#endif
 
 	fprintf(stderr, "sliced in %fs\n",
 		(double) std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000000.0);
