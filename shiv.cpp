@@ -3000,6 +3000,19 @@ static int write_gcode(const char *path, struct object *o)
 		plan_moves(o, slice, i, &plan_m);
 		do_retract(slice, &plan_m, true);
 	}
+	/* We now know where the previous layer ends, so recalculate the move length and layer time */
+	for (ssize_t i = 1; i < o->n_slices; ++i) {
+		struct slice *slice = &o->slices[i];
+		const struct slice *prev_slice = &o->slices[i - 1];
+		if (slice->moves.size() > 0 && prev_slice->moves.size() > 0) {
+			const struct g_move &m0 = prev_slice->moves[prev_slice->moves.size() - 1];
+			struct g_move &m1 = slice->moves[0];
+			slice->layer_time -= m1.len / m1.feed_rate;
+			const fl_t xv = CINT_TO_FL_T(m1.x - m0.x), yv = CINT_TO_FL_T(m1.y - m0.y), zv = CINT_TO_FL_T(m1.z - m0.z);
+			m1.len = sqrt(xv * xv + yv * yv + zv * zv);
+			slice->layer_time += m1.len / m1.feed_rate;
+		}
+	}
 #ifdef _OPENMP
 	#pragma omp parallel for schedule(dynamic) reduction(+:total_e,total_time)
 #endif
@@ -3007,18 +3020,6 @@ static int write_gcode(const char *path, struct object *o)
 		struct slice *slice = &o->slices[i];
 		if (i == 0)
 			apply_feed_rate_mult(slice, config.first_layer_mult);
-		else {
-			/* We now know where the previous layer ends, so recalculate the move length and layer time */
-			const struct slice *prev_slice = &o->slices[i - 1];
-			if (slice->moves.size() > 0 && prev_slice->moves.size() > 0) {
-				const struct g_move &m0 = prev_slice->moves[prev_slice->moves.size() - 1];
-				struct g_move &m1 = slice->moves[0];
-				slice->layer_time -= m1.len / m1.feed_rate;
-				const fl_t xv = CINT_TO_FL_T(m1.x - m0.x), yv = CINT_TO_FL_T(m1.y - m0.y), zv = CINT_TO_FL_T(m1.z - m0.z);
-				m1.len = sqrt(xv * xv + yv * yv + zv * zv);
-				slice->layer_time += m1.len / m1.feed_rate;
-			}
-		}
 		if (slice->layer_time > 0.0 && slice->layer_time < config.min_layer_time)
 			apply_feed_rate_mult(slice, slice->layer_time / config.min_layer_time);
 		bool is_first_move = true;
