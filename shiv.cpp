@@ -1668,7 +1668,7 @@ static void extend_support_downward(struct object *o, const ClipperLib::PolyNode
 	p.push_back(n->Contour);
 	for (const ClipperLib::PolyNode *c : n->Childs)
 		p.push_back(c->Contour);
-	ClipperLib::Paths *clipped_paths = new ClipperLib::Paths[slice_index + 1];
+	ClipperLib::Paths *clipped_paths = new ClipperLib::Paths[slice_index + 1]();
 	for (k = slice_index; k >= 0; --k) {
 		ClipperLib::Clipper c;
 		c.AddPaths(p, ClipperLib::ptSubject, true);
@@ -3104,7 +3104,7 @@ int main(int argc, char *argv[])
 {
 	int opt, ret;
 	char *path, *output_path = NULL;
-	struct object o;
+	struct object *o;
 	fl_t scale_factor = 1.0, x_translate = 0.0, y_translate = 0.0, z_chop = 0.0;
 	bool print_config = false;
 
@@ -3274,32 +3274,32 @@ int main(int argc, char *argv[])
 	}
 
 	fprintf(stderr, "load object...\n");
-	memset(&o, 0, sizeof(o));
-	ret = read_binary_stl(&o, path);
+	o = new struct object();
+	ret = read_binary_stl(o, path);
 	if (ret) {
 		fprintf(stderr, "error: failed to read stl: %s: %s\n", path, (ret == 2) ? "short read" : strerror(errno));
 		return 1;
 	}
 
-	fprintf(stderr, "  polygons = %zd\n", o.n);
-	fprintf(stderr, "  center   = (%f, %f, %f)\n", o.c.x, o.c.y, o.c.z);
-	fprintf(stderr, "  height   = %f\n", o.h);
-	fprintf(stderr, "  width    = %f\n", o.w);
-	fprintf(stderr, "  depth    = %f\n", o.d);
+	fprintf(stderr, "  polygons = %zd\n", o->n);
+	fprintf(stderr, "  center   = (%f, %f, %f)\n", o->c.x, o->c.y, o->c.z);
+	fprintf(stderr, "  height   = %f\n", o->h);
+	fprintf(stderr, "  width    = %f\n", o->w);
+	fprintf(stderr, "  depth    = %f\n", o->d);
 
 	fprintf(stderr, "scale and translate object...\n");
-	scale_object(&o, config.xy_scale_factor * scale_factor, config.xy_scale_factor * scale_factor, config.z_scale_factor * scale_factor);
-	const fl_t z_translate = (config.preserve_layer_offset) ? round((o.h / 2.0 - o.c.z) / config.layer_height) * config.layer_height : o.h / 2.0 - o.c.z;
-	translate_object(&o, -o.c.x + config.x_center, -o.c.y + config.y_center, z_translate - z_chop);
-	fprintf(stderr, "  center   = (%f, %f, %f)\n", o.c.x, o.c.y, o.c.z);
-	fprintf(stderr, "  height   = %f\n", o.h);
-	fprintf(stderr, "  width    = %f\n", o.w);
-	fprintf(stderr, "  depth    = %f\n", o.d);
+	scale_object(o, config.xy_scale_factor * scale_factor, config.xy_scale_factor * scale_factor, config.z_scale_factor * scale_factor);
+	const fl_t z_translate = (config.preserve_layer_offset) ? round((o->h / 2.0 - o->c.z) / config.layer_height) * config.layer_height : o->h / 2.0 - o->c.z;
+	translate_object(o, -o->c.x + config.x_center, -o->c.y + config.y_center, z_translate - z_chop);
+	fprintf(stderr, "  center   = (%f, %f, %f)\n", o->c.x, o->c.y, o->c.z);
+	fprintf(stderr, "  height   = %f\n", o->h);
+	fprintf(stderr, "  width    = %f\n", o->w);
+	fprintf(stderr, "  depth    = %f\n", o->d);
 
 	fprintf(stderr, "slice object...\n");
-	slice_object(&o);
+	slice_object(o);
 	if (output_path) {
-		if (write_gcode(output_path, &o)) {
+		if (write_gcode(output_path, o)) {
 			fprintf(stderr, "error: failed to write gcode output: %s: %s\n", output_path, strerror(errno));
 			return 1;
 		}
