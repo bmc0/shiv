@@ -3024,7 +3024,7 @@ static int write_gcode(const char *path, struct object *o)
 		for (struct at_layer_gcode &g : config.at_layer)
 			if (g.layer == i)
 				write_gcode_string(g.value, f, false);
-		if (i >= config.cool_layer) {
+		if (config.cool_layer >= 0 && i >= config.cool_layer) {
 			if (config.cool_off_time > 0.0 && slice->layer_time >= config.cool_off_time) {
 				write_gcode_string(config.cool_off_gcode, f, false);
 			}
