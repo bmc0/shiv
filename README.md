@@ -109,6 +109,7 @@ Setting                    | Default value | Description
 `sparse_restart_max_vol`   |         `0.0` | Maximum extra restart volume for the above case.
 `z_hop`                    |         `0.0` | Raise the z axis by this amount after retracting when traveling.
 `z_hop_angle`              |        `15.0` | Ascent angle for z-hop.
+`only_hop_between_islands` |       `false` | If `z_hop` > 0, only do a z-hop move when traveling between islands.
 `cool_layer`               |           `2` | Turn on part cooling at this layer (numbered from zero). Set to `-1` to disable cooling.
 `start_gcode`              |        `None` | Prepend this G-code to beginning of the output file.
 `end_gcode`                |        `None` | Append this G-code to the end of the output file.
@@ -120,7 +121,7 @@ Setting                    | Default value | Description
 `cool_max_time`            |        `10.0` | If layer time <= `cool_max_time`, the `cool_max` value will be used.
 `cool_off_time`            |         `0.0` | If layer time >= `cool_off_time`, cooling will be turned off. Set to zero to disable this feature.
 `edge_overlap`             |         `0.5` | Allowable edge path overlap in units of `extrusion_width`.
-`comb`                     |        `true` | Avoid crossing boundaries.
+`comb`                     |        `true` | Avoid crossing boundaries. Automatically disabled if `z_hop` > 0 and `only_hop_between_islands` is false.
 `strict_shell_order`       |       `false` | Always do insets in order within an island.
 `align_seams`              |        `true` | Align seams to the lower left corner. The nearest point is picked instead if this is false.
 `align_interior_seams`     |        `true` | Align interior seams to the lower left corner if `align_seams` is also true. If false, only exterior seams are aligned.

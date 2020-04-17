@@ -166,6 +166,7 @@ static struct {
 	fl_t sparse_restart_max_vol   = 0.0;        /* Maximum extra restart volume for the above case */
 	fl_t z_hop                    = 0.0;        /* Raise the z axis by this amount after retracting when traveling */
 	fl_t z_hop_angle              = 15.0;       /* Ascent angle for z-hop */
+	bool only_hop_between_islands = false;      /* Only do z-hop when traveling between islands; comb otherwise (if set) */
 	int cool_layer                = 2;          /* Turn on part cooling at this layer */
 	char *start_gcode             = NULL;
 	char *end_gcode               = NULL;
@@ -325,6 +326,7 @@ static const struct setting settings[] = {
 	SETTING(sparse_restart_max_vol,    SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(z_hop,                     SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       FL_T_INF } }, true,  false),
 	SETTING(z_hop_angle,               SETTING_TYPE_FL_T,           false, false, { .f = { 0.0,       90.0     } }, false, true),
+	SETTING(only_hop_between_islands,  SETTING_TYPE_BOOL,           false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(cool_layer,                SETTING_TYPE_INT,            false, false, { .i = { -1,        INT_MAX  } }, true,  true),
 	SETTING(start_gcode,               SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
 	SETTING(end_gcode,                 SETTING_TYPE_STR,            false, false, { .i = { 0,         0        } }, false, false),
@@ -2331,17 +2333,16 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 		sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z)),
 		scalable, (is_travel) ? false : is_closed_path
 	};
+	bool do_island_hop = (config.only_hop_between_islands && config.z_hop > 0.0 && (slice->last_boundaries.size() > 0 || !island));
 	if (is_travel) {
 		if (m->force_retract)
 			do_retract(slice, m, true);
-		if (z == m->z && config.comb) {  /* NOTE: config.comb is false if z-hop is enabled */
+		if (!do_island_hop && z == m->z && config.comb) {  /* NOTE: config.comb is false if z-hop is enabled and config.only_hop_between_islands is false */
 			if (slice->last_boundaries.size() > 0) {
 				/* Inside an island and moving to a point outside of it */
 				do_retract(slice, m, true);
 				if (slice->last_comb_paths.size() > 0)
 					move_to_island_exit(slice, m, x, y, feed_rate);
-				slice->last_boundaries.clear();
-				slice->last_comb_paths.clear();
 				combed_travel(slice, island, m, slice->printed_outer_boundaries, slice->printed_outer_comb_paths, x, y, feed_rate, retract_threshold);
 			}
 			else if (island) {
@@ -2360,11 +2361,15 @@ static void linear_move(struct slice *slice, const struct island *island, struct
 				|| (island && move.len > config.extrusion_width * 2.0 && crosses_exposed_surface(island, m->x, m->y, x, y)))) {
 			do_retract(slice, m, true);
 		}
+		if (config.comb) {
+			slice->last_boundaries.clear();
+			slice->last_comb_paths.clear();
+		}
 		f_mx = CINT_TO_FL_T(m->x), f_my = CINT_TO_FL_T(m->y);  /* m->{x,y} will change if a wipe happened. m->z will not change */
 		move.len = sqrt((f_mx - f_x) * (f_mx - f_x) + (f_my - f_y) * (f_my - f_y) + (f_mz - f_z) * (f_mz - f_z));
 		/* FIXME: hopping will only work correctly if there is only a single travel
 		   move between extrusion moves. This should always be the case currently. */
-		if (z == m->z && m->is_retracted && !m->is_hopped && config.z_hop > 0.0) {
+		if (z == m->z && m->is_retracted && !m->is_hopped && ((config.only_hop_between_islands) ? do_island_hop : config.z_hop > 0.0)) {
 			if (config.z_hop_angle == 90.0) {
 				move.z += FL_T_TO_CINT(config.z_hop);
 				struct g_move hop_move = { m->x, m->y, move.z, 0.0, config.travel_feed_rate, config.z_hop, false, false };
@@ -3187,7 +3192,7 @@ int main(int argc, char *argv[])
 	config.edge_width = (config.extrusion_area - (config.layer_height * config.layer_height * M_PI_4)) / config.layer_height + config.layer_height;
 	config.edge_offset = (config.edge_width + (config.edge_width - config.extrusion_width) * (1.0 - config.edge_packing_density)) / -2.0;
 	config.material_area = config.material_diameter * config.material_diameter * M_PI_4;
-	if (config.z_hop > 0.0)
+	if (config.z_hop > 0.0 && !config.only_hop_between_islands)
 		config.comb = false;  /* combing is useless if z-hop is enabled */
 	if (config.cool_on_gcode == NULL)
 		config.cool_on_gcode = strdup(DEFAULT_COOL_ON_STR);
