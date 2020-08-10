@@ -3022,6 +3022,7 @@ static int write_gcode(const char *path, struct object *o)
 		fputs("; raft\n", f);
 		fputs(raft_dummy_slice->gcode.str().c_str(), f);
 		delete raft_dummy_slice;
+		fputs("G92 E0\n", f);
 	}
 	for (ssize_t i = 0; i < o->n_slices; ++i) {
 		struct slice *slice = &o->slices[i];
